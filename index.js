@@ -4,7 +4,6 @@ const app = express();
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
-// Guardamos el estado de cada cliente
 const sesiones = {};
 
 const MENU = `🛒 *Flores Gomez*
@@ -15,7 +14,8 @@ Nuestros productos:
 🔹 Producto 3 - $120 MXN
 
 ¿Te gustaría hacer un pedido?
-Responde *SI* o *NO*`;
+Responde *SI* o *NO*
+Escribe *ASESOR* para hablar con alguien`;
 
 app.post('/webhook', (req, res) => {
     const mensaje = req.body.Body.trim();
@@ -23,7 +23,6 @@ app.post('/webhook', (req, res) => {
     const fecha = new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
     const mensajeLower = mensaje.toLowerCase();
 
-    // Inicializar sesión si no existe
     if (!sesiones[numero]) {
         sesiones[numero] = { estado: 'inicio' };
     }
@@ -56,7 +55,6 @@ app.post('/webhook', (req, res) => {
 
     } else if (sesion.estado === 'confirmando_pedido') {
         if (mensajeLower === 'si' || mensajeLower === 'sí') {
-            // Imprimir ticket
             console.log('================================');
             console.log('       NUEVO PEDIDO');
             console.log('================================');
@@ -77,6 +75,9 @@ app.post('/webhook', (req, res) => {
         } else {
             respuesta = `Por favor responde *SI* para confirmar o *NO* para modificar tu pedido.`;
         }
+    } else {
+        respuesta = `👋 ¡Bienvenido a *Flores Gomez*!\n\n${MENU}`;
+        sesion.estado = 'esperando_decision';
     }
 
     res.set('Content-Type', 'text/xml');
