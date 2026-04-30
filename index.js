@@ -6,16 +6,16 @@ app.use(express.json());
 
 const sesiones = {};
 
-const MENU = `🛒 *Flores Gomez*
+const MENU = `Bienvenido a Flores Gomez
 Nuestros productos:
 
-🔹 Producto 1 - $20 MXN
-🔹 Producto 2 - $60 MXN
-🔹 Producto 3 - $120 MXN
+- Producto 1 - $20 MXN
+- Producto 2 - $60 MXN
+- Producto 3 - $120 MXN
 
-¿Te gustaría hacer un pedido?
-Responde *SI* o *NO*
-Escribe *ASESOR* para hablar con alguien`;
+Te gustaria hacer un pedido?
+Responde SI o NO
+Escribe ASESOR para hablar con alguien`;
 
 app.post('/webhook', (req, res) => {
     const mensaje = req.body.Body.trim();
@@ -31,30 +31,30 @@ app.post('/webhook', (req, res) => {
     let respuesta = '';
 
     if (sesion.estado === 'inicio') {
-        respuesta = `👋 ¡Bienvenido a *Flores Gomez*!\n\n${MENU}`;
+        respuesta = MENU;
         sesion.estado = 'esperando_decision';
 
     } else if (sesion.estado === 'esperando_decision') {
-        if (mensajeLower === 'si' || mensajeLower === 'sí') {
-            respuesta = `📝 Por favor escríbenos tu pedido.\n\nEjemplo:\n1 kg de Producto 1\n2 Producto 2`;
+        if (mensajeLower === 'si' || mensajeLower === 'si') {
+            respuesta = `Por favor escribenos tu pedido.\n\nEjemplo:\n1 kg de Producto 1\n2 Producto 2`;
             sesion.estado = 'esperando_pedido';
         } else if (mensajeLower === 'no') {
-            respuesta = `👋 ¡Hasta luego! Fue un placer atenderte.\nCualquier cosa estamos aquí. 😊`;
+            respuesta = `Hasta luego! Fue un placer atenderte. Cualquier cosa estamos aqui.`;
             sesion.estado = 'inicio';
         } else if (mensajeLower === 'asesor') {
-            respuesta = `👤 En breve un asesor se comunicará contigo.\nGracias por tu paciencia. 🙏`;
+            respuesta = `En breve un asesor se comunicara contigo. Gracias por tu paciencia.`;
             sesion.estado = 'inicio';
         } else {
-            respuesta = `Por favor responde *SI*, *NO* o escribe *ASESOR* para hablar con alguien.`;
+            respuesta = `Por favor responde SI, NO o escribe ASESOR para hablar con alguien.`;
         }
 
     } else if (sesion.estado === 'esperando_pedido') {
         sesion.pedido = mensaje;
-        respuesta = `📋 Tu pedido es:\n\n${mensaje}\n\n¿Confirmas tu pedido?\nResponde *SI* para confirmar o *NO* para modificarlo.`;
+        respuesta = `Tu pedido es:\n\n${mensaje}\n\nConfirmas tu pedido?\nResponde SI para confirmar o NO para modificarlo.`;
         sesion.estado = 'confirmando_pedido';
 
     } else if (sesion.estado === 'confirmando_pedido') {
-        if (mensajeLower === 'si' || mensajeLower === 'sí') {
+        if (mensajeLower === 'si' || mensajeLower === 'si') {
             console.log('================================');
             console.log('       NUEVO PEDIDO');
             console.log('================================');
@@ -65,27 +65,28 @@ app.post('/webhook', (req, res) => {
             console.log(sesion.pedido);
             console.log('================================');
 
-            respuesta = `✅ ¡Pedido confirmado! En breve lo procesamos.\n¡Gracias por tu compra en *Flores Gomez*! 🌸`;
+            respuesta = `Pedido confirmado! En breve lo procesamos. Gracias por tu compra en Flores Gomez!`;
             sesion.estado = 'inicio';
             sesion.pedido = null;
 
         } else if (mensajeLower === 'no') {
-            respuesta = `📝 Por favor escríbenos tu pedido nuevamente.`;
+            respuesta = `Por favor escribenos tu pedido nuevamente.`;
             sesion.estado = 'esperando_pedido';
         } else {
-            respuesta = `Por favor responde *SI* para confirmar o *NO* para modificar tu pedido.`;
+            respuesta = `Por favor responde SI para confirmar o NO para modificar tu pedido.`;
         }
     } else {
-        respuesta = `👋 ¡Bienvenido a *Flores Gomez*!\n\n${MENU}`;
+        respuesta = MENU;
         sesion.estado = 'esperando_decision';
     }
 
+    const twiml = respuesta
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
     res.set('Content-Type', 'text/xml');
-    res.send(`
-        <Response>
-            <Message>${respuesta}</Message>
-        </Response>
-    `);
+    res.send(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>${twiml}</Message></Response>`);
 });
 
 const PORT = process.env.PORT || 3000;
