@@ -6,16 +6,23 @@ app.use(express.json());
 
 app.post('/webhook', (req, res) => {
     const mensaje = req.body.Body;
-    const numero = req.body.From;
+    const numero = req.body.From.replace('whatsapp:', '');
+    const fecha = new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
 
-    console.log('Nuevo pedido recibido');
-    console.log('De:', numero);
-    console.log('Mensaje:', mensaje);
+    console.log('================================');
+    console.log('       NUEVO PEDIDO');
+    console.log('================================');
+    console.log(`Fecha:   ${fecha}`);
+    console.log(`Cliente: ${numero}`);
+    console.log('--------------------------------');
+    console.log('PEDIDO:');
+    console.log(mensaje);
+    console.log('================================');
 
     res.set('Content-Type', 'text/xml');
     res.send(`
         <Response>
-            <Message>Pedido recibido. En breve lo procesamos.</Message>
+            <Message>✅ Pedido recibido. En breve lo procesamos.</Message>
         </Response>
     `);
 });
