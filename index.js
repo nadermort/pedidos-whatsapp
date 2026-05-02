@@ -1,9 +1,25 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const app = express();
 
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
+// Conectar a MongoDB
+mongoose.connect(process.env.MONGODB_URI)
+    .then(() => console.log('Conectado a MongoDB'))
+    .catch(err => console.log('Error MongoDB:', err));
+
+// Modelo de Pedido
+const PedidoSchema = new mongoose.Schema({
+    numero: String,
+    pedido: String,
+    fecha: { type: Date, default: Date.now },
+    estado: { type: String, default: 'pendiente' }
+});
+const Pedido = mongoose.model('Pedido', PedidoSchema);
+
+// Sesiones en memoria
 const sesiones = {};
 
 const MENU = `Bienvenido a Flores Gomez
@@ -17,7 +33,7 @@ Te gustaria hacer un pedido?
 Responde SI o NO
 Escribe ASESOR para hablar con alguien`;
 
-app.post('/webhook', (req, res) => {
+app.post('/webhook', async (req, res) => {
     const mensaje = req.body.Body.trim();
     const numero = req.body.From.replace('whatsapp:', '');
     const fecha = new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
@@ -35,7 +51,7 @@ app.post('/webhook', (req, res) => {
         sesion.estado = 'esperando_decision';
 
     } else if (sesion.estado === 'esperando_decision') {
-        if (mensajeLower === 'si' || mensajeLower === 'si') {
+        if (mensajeLower === 'si' || mensajeLower === 'sí') {
             respuesta = `Por favor escribenos tu pedido.\n\nEjemplo:\n1 kg de Producto 1\n2 Producto 2`;
             sesion.estado = 'esperando_pedido';
         } else if (mensajeLower === 'no') {
@@ -54,7 +70,13 @@ app.post('/webhook', (req, res) => {
         sesion.estado = 'confirmando_pedido';
 
     } else if (sesion.estado === 'confirmando_pedido') {
-        if (mensajeLower === 'si' || mensajeLower === 'si') {
+        if (mensajeLower === 'si' || mensajeLower === 'sí') {
+            // Guardar en MongoDB
+            await Pedido.create({
+                numero: numero,
+                pedido: sesion.pedido
+            });
+
             console.log('================================');
             console.log('       NUEVO PEDIDO');
             console.log('================================');
