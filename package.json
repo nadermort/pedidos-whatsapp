@@ -1,6 +1,7 @@
 {
   "dependencies": {
     "express": "^5.2.1",
+    "mongoose": "^9.6.1",
     "twilio": "^6.0.0"
   }
 }
