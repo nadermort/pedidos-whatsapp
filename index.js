@@ -207,6 +207,41 @@ app.post('/panel/:slug/pedido/:id/estado', async (req, res) => {
 });
 
 // Webhook WhatsApp
+// Webhook Meta - verificacion
+app.get('/webhook-meta', (req, res) => {
+    const VERIFY_TOKEN = 'mitoken123';
+    const mode = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+
+    if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+        console.log('Webhook verificado');
+        res.status(200).send(challenge);
+    } else {
+        res.sendStatus(403);
+    }
+});
+
+// Webhook Meta - recibir mensajes
+app.post('/webhook-meta', async (req, res) => {
+    const body = req.body;
+    
+    if (body.object === 'whatsapp_business_account') {
+        const entry = body.entry?.[0];
+        const change = entry?.changes?.[0];
+        const message = change?.value?.messages?.[0];
+        
+        if (message) {
+            const numeroCliente = message.from;
+            const texto = message.text?.body;
+            const numeroNegocio = change.value.metadata.display_phone_number.replace(/\D/g, '');
+            
+            console.log(`Mensaje de ${numeroCliente}: ${texto}`);
+        }
+    }
+    
+    res.sendStatus(200);
+});
 app.post('/webhook', async (req, res) => {
     const mensaje = req.body.Body.trim();
     const numeroCliente = req.body.From.replace('whatsapp:', '');
