@@ -14,6 +14,7 @@ mongoose.connect(process.env.MONGODB_URI)
 // Modelo de Pedido
 const PedidoSchema = new mongoose.Schema({
     negocio: String,
+    slug: String,
     numero_cliente: String,
     pedido: String,
     fecha: { type: Date, default: Date.now },
@@ -33,6 +34,122 @@ function generarMenu(negocio) {
     return menu;
 }
 
+// Buscar negocio por slug
+function buscarNegocioPorSlug(slug) {
+    return Object.values(negocios).find(n => n.slug === slug);
+}
+
+// Panel de login
+app.get('/panel/:slug', (req, res) => {
+    const negocio = buscarNegocioPorSlug(req.params.slug);
+    if (!negocio) return res.status(404).send('Negocio no encontrado');
+
+    res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Panel - ${negocio.nombre}</title>
+        <style>
+            body { font-family: Arial; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f5f5f5; }
+            .box { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); text-align: center; width: 300px; }
+            h2 { color: #25D366; margin-bottom: 5px; }
+            p { color: #666; margin-bottom: 20px; }
+            input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; font-size: 15px; }
+            button { width: 100%; padding: 12px; background: #25D366; color: white; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; }
+            button:hover { background: #1ea855; }
+            .error { color: red; font-size: 13px; }
+        </style>
+    </head>
+    <body>
+        <div class="box">
+            <h2>📋 ${negocio.nombre}</h2>
+            <p>Panel de pedidos</p>
+            <form method="POST" action="/panel/${req.params.slug}/login">
+                <input type="password" name="password" placeholder="Contrasena" required>
+                <button type="submit">Entrar</button>
+            </form>
+        </div>
+    </body>
+    </html>`);
+});
+
+// Login del panel
+app.post('/panel/:slug/login', (req, res) => {
+    const negocio = buscarNegocioPorSlug(req.params.slug);
+    if (!negocio) return res.status(404).send('Negocio no encontrado');
+
+    if (req.body.password !== negocio.password) {
+        return res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head><meta charset="UTF-8"><title>Error</title>
+        <style>body{font-family:Arial;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#f5f5f5;}.box{background:white;padding:40px;border-radius:12px;text-align:center;}button{padding:10px 20px;background:#25D366;color:white;border:none;border-radius:8px;cursor:pointer;}</style>
+        </head>
+        <body><div class="box"><p style="color:red">Contrasena incorrecta</p><a href="/panel/${req.params.slug}"><button>Volver</button></a></div></body>
+        </html>`);
+    }
+
+    res.redirect(`/panel/${req.params.slug}/pedidos`);
+});
+
+// Panel de pedidos
+app.get('/panel/:slug/pedidos', async (req, res) => {
+    const negocio = buscarNegocioPorSlug(req.params.slug);
+    if (!negocio) return res.status(404).send('Negocio no encontrado');
+
+    const pedidos = await Pedido.find({ slug: req.params.slug }).sort({ fecha: -1 }).limit(50);
+
+    let html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Pedidos - ${negocio.nombre}</title>
+        <style>
+            body { font-family: Arial; margin: 0; background: #f5f5f5; }
+            .header { background: #25D366; color: white; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; }
+            .header h1 { margin: 0; font-size: 20px; }
+            .header span { font-size: 13px; opacity: 0.9; }
+            .content { padding: 20px; }
+            .pedido { background: white; padding: 15px; margin: 10px 0; border-radius: 8px; border-left: 4px solid #25D366; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+            .cliente { color: #666; font-size: 13px; }
+            .pedido-texto { margin: 8px 0; font-size: 15px; }
+            .fecha { color: #999; font-size: 12px; }
+            .estado { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; background: #fff3cd; color: #856404; }
+            .vacio { text-align: center; color: #999; margin-top: 50px; }
+        </style>
+        <meta http-equiv="refresh" content="30">
+    </head>
+    <body>
+        <div class="header">
+            <h1>📋 ${negocio.nombre}</h1>
+            <span>${pedidos.length} pedidos</span>
+        </div>
+        <div class="content">`;
+
+    if (pedidos.length === 0) {
+        html += `<div class="vacio"><p>No hay pedidos aun</p></div>`;
+    } else {
+        pedidos.forEach(p => {
+            const fecha = new Date(p.fecha).toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
+            html += `
+            <div class="pedido">
+                <div class="cliente">📱 ${p.numero_cliente}</div>
+                <div class="pedido-texto">🛒 ${p.pedido.replace(/\n/g, '<br>')}</div>
+                <div class="fecha">🕐 ${fecha}</div>
+                <span class="estado">${p.estado}</span>
+            </div>`;
+        });
+    }
+
+    html += `</div></body></html>`;
+    res.send(html);
+});
+
+// Webhook WhatsApp
 app.post('/webhook', async (req, res) => {
     const mensaje = req.body.Body.trim();
     const numeroCliente = req.body.From.replace('whatsapp:', '');
@@ -40,7 +157,6 @@ app.post('/webhook', async (req, res) => {
     const fecha = new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
     const mensajeLower = mensaje.toLowerCase();
 
-    // Buscar negocio por numero
     const negocio = negocios[numeroNegocio];
 
     if (!negocio) {
@@ -84,6 +200,7 @@ app.post('/webhook', async (req, res) => {
         if (mensajeLower === 'si' || mensajeLower === 'sí') {
             await Pedido.create({
                 negocio: negocio.nombre,
+                slug: negocio.slug,
                 numero_cliente: numeroCliente,
                 pedido: sesion.pedido
             });
