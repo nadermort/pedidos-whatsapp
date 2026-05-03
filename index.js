@@ -34,12 +34,11 @@ function generarMenu(negocio) {
     return menu;
 }
 
-// Buscar negocio por slug
 function buscarNegocioPorSlug(slug) {
     return Object.values(negocios).find(n => n.slug === slug);
 }
 
-// Panel de login
+// Panel login
 app.get('/panel/:slug', (req, res) => {
     const negocio = buscarNegocioPorSlug(req.params.slug);
     if (!negocio) return res.status(404).send('Negocio no encontrado');
@@ -59,7 +58,6 @@ app.get('/panel/:slug', (req, res) => {
             input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; font-size: 15px; }
             button { width: 100%; padding: 12px; background: #25D366; color: white; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; }
             button:hover { background: #1ea855; }
-            .error { color: red; font-size: 13px; }
         </style>
     </head>
     <body>
@@ -75,7 +73,7 @@ app.get('/panel/:slug', (req, res) => {
     </html>`);
 });
 
-// Login del panel
+// Panel login POST
 app.post('/panel/:slug/login', (req, res) => {
     const negocio = buscarNegocioPorSlug(req.params.slug);
     if (!negocio) return res.status(404).send('Negocio no encontrado');
@@ -115,11 +113,18 @@ app.get('/panel/:slug/pedidos', async (req, res) => {
             .header span { font-size: 13px; opacity: 0.9; }
             .content { padding: 20px; }
             .pedido { background: white; padding: 15px; margin: 10px 0; border-radius: 8px; border-left: 4px solid #25D366; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+            .pedido.entregado { border-left-color: #6c757d; opacity: 0.7; }
+            .pedido.cancelado { border-left-color: #dc3545; opacity: 0.7; }
             .cliente { color: #666; font-size: 13px; }
             .pedido-texto { margin: 8px 0; font-size: 15px; }
-            .fecha { color: #999; font-size: 12px; }
-            .estado { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; background: #fff3cd; color: #856404; }
+            .fecha { color: #999; font-size: 12px; margin-bottom: 8px; }
+            .estado-pendiente { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; background: #fff3cd; color: #856404; }
+            .estado-entregado { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; background: #d4edda; color: #155724; }
+            .estado-cancelado { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; background: #f8d7da; color: #721c24; }
+            .btn-entregado { background: #25D366; color: white; border: none; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; margin-left: 8px; }
+            .btn-cancelado { background: #dc3545; color: white; border: none; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; margin-left: 5px; }
             .vacio { text-align: center; color: #999; margin-top: 50px; }
+            .export-btn { background: white; color: #25D366; border: 2px solid white; padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: bold; }
         </style>
         <meta http-equiv="refresh" content="30">
     </head>
@@ -135,18 +140,35 @@ app.get('/panel/:slug/pedidos', async (req, res) => {
     } else {
         pedidos.forEach(p => {
             const fecha = new Date(p.fecha).toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
+            const claseEstado = p.estado === 'entregado' ? 'estado-entregado' : p.estado === 'cancelado' ? 'estado-cancelado' : 'estado-pendiente';
+            const clasePedido = p.estado === 'entregado' ? 'pedido entregado' : p.estado === 'cancelado' ? 'pedido cancelado' : 'pedido';
+
             html += `
-            <div class="pedido">
+            <div class="${clasePedido}">
                 <div class="cliente">📱 ${p.numero_cliente}</div>
                 <div class="pedido-texto">🛒 ${p.pedido.replace(/\n/g, '<br>')}</div>
                 <div class="fecha">🕐 ${fecha}</div>
-                <span class="estado">${p.estado}</span>
+                <span class="${claseEstado}">${p.estado}</span>
+                ${p.estado === 'pendiente' ? `
+                <form method="POST" action="/panel/${req.params.slug}/pedido/${p._id}/estado" style="display:inline">
+                    <button class="btn-entregado" name="estado" value="entregado">✅ Entregado</button>
+                    <button class="btn-cancelado" name="estado" value="cancelado">❌ Cancelado</button>
+                </form>` : ''}
             </div>`;
         });
     }
 
     html += `</div></body></html>`;
     res.send(html);
+});
+
+// Cambiar estado de pedido
+app.post('/panel/:slug/pedido/:id/estado', async (req, res) => {
+    const negocio = buscarNegocioPorSlug(req.params.slug);
+    if (!negocio) return res.status(404).send('No encontrado');
+
+    await Pedido.findByIdAndUpdate(req.params.id, { estado: req.body.estado });
+    res.redirect(`/panel/${req.params.slug}/pedidos`);
 });
 
 // Webhook WhatsApp
