@@ -1,5 +1,6 @@
 const express = require('express');
 const mongoose = require('mongoose');
+const negocios = require('./negocios');
 const app = express();
 
 app.use(express.urlencoded({ extended: false }));
@@ -12,7 +13,8 @@ mongoose.connect(process.env.MONGODB_URI)
 
 // Modelo de Pedido
 const PedidoSchema = new mongoose.Schema({
-    numero: String,
+    negocio: String,
+    numero_cliente: String,
     pedido: String,
     fecha: { type: Date, default: Date.now },
     estado: { type: String, default: 'pendiente' }
@@ -22,32 +24,41 @@ const Pedido = mongoose.model('Pedido', PedidoSchema);
 // Sesiones en memoria
 const sesiones = {};
 
-const MENU = `Bienvenido a Flores Gomez
-Nuestros productos:
-
-- Producto 1 - $20 MXN
-- Producto 2 - $60 MXN
-- Producto 3 - $120 MXN
-
-Te gustaria hacer un pedido?
-Responde SI o NO
-Escribe ASESOR para hablar con alguien`;
+function generarMenu(negocio) {
+    let menu = `Bienvenido a ${negocio.nombre}\nNuestros productos:\n\n`;
+    negocio.productos.forEach(p => {
+        menu += `- ${p.nombre} - $${p.precio} MXN\n`;
+    });
+    menu += `\nTe gustaria hacer un pedido?\nResponde SI o NO\nEscribe ASESOR para hablar con alguien`;
+    return menu;
+}
 
 app.post('/webhook', async (req, res) => {
     const mensaje = req.body.Body.trim();
-    const numero = req.body.From.replace('whatsapp:', '');
+    const numeroCliente = req.body.From.replace('whatsapp:', '');
+    const numeroNegocio = req.body.To.replace('whatsapp:', '');
     const fecha = new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
     const mensajeLower = mensaje.toLowerCase();
 
-    if (!sesiones[numero]) {
-        sesiones[numero] = { estado: 'inicio' };
+    // Buscar negocio por numero
+    const negocio = negocios[numeroNegocio];
+
+    if (!negocio) {
+        res.set('Content-Type', 'text/xml');
+        res.send(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>Servicio no disponible.</Message></Response>`);
+        return;
     }
 
-    const sesion = sesiones[numero];
+    const sesionKey = `${numeroNegocio}_${numeroCliente}`;
+    if (!sesiones[sesionKey]) {
+        sesiones[sesionKey] = { estado: 'inicio' };
+    }
+
+    const sesion = sesiones[sesionKey];
     let respuesta = '';
 
     if (sesion.estado === 'inicio') {
-        respuesta = MENU;
+        respuesta = generarMenu(negocio);
         sesion.estado = 'esperando_decision';
 
     } else if (sesion.estado === 'esperando_decision') {
@@ -55,39 +66,38 @@ app.post('/webhook', async (req, res) => {
             respuesta = `Por favor escribenos tu pedido.\n\nEjemplo:\n1 kg de Producto 1\n2 Producto 2`;
             sesion.estado = 'esperando_pedido';
         } else if (mensajeLower === 'no') {
-            respuesta = `Hasta luego! Fue un placer atenderte. Cualquier cosa estamos aqui.`;
+            respuesta = `Hasta luego! Fue un placer atenderte.`;
             sesion.estado = 'inicio';
         } else if (mensajeLower === 'asesor') {
             respuesta = `En breve un asesor se comunicara contigo. Gracias por tu paciencia.`;
             sesion.estado = 'inicio';
         } else {
-            respuesta = `Por favor responde SI, NO o escribe ASESOR para hablar con alguien.`;
+            respuesta = `Por favor responde SI, NO o escribe ASESOR.`;
         }
 
     } else if (sesion.estado === 'esperando_pedido') {
         sesion.pedido = mensaje;
-        respuesta = `Tu pedido es:\n\n${mensaje}\n\nConfirmas tu pedido?\nResponde SI para confirmar o NO para modificarlo.`;
+        respuesta = `Tu pedido es:\n\n${mensaje}\n\nConfirmas?\nResponde SI o NO`;
         sesion.estado = 'confirmando_pedido';
 
     } else if (sesion.estado === 'confirmando_pedido') {
         if (mensajeLower === 'si' || mensajeLower === 'sí') {
-            // Guardar en MongoDB
             await Pedido.create({
-                numero: numero,
+                negocio: negocio.nombre,
+                numero_cliente: numeroCliente,
                 pedido: sesion.pedido
             });
 
             console.log('================================');
-            console.log('       NUEVO PEDIDO');
+            console.log(`NUEVO PEDIDO - ${negocio.nombre}`);
             console.log('================================');
             console.log(`Fecha:   ${fecha}`);
-            console.log(`Cliente: ${numero}`);
+            console.log(`Cliente: ${numeroCliente}`);
             console.log('--------------------------------');
-            console.log('PEDIDO:');
             console.log(sesion.pedido);
             console.log('================================');
 
-            respuesta = `Pedido confirmado! En breve lo procesamos. Gracias por tu compra en Flores Gomez!`;
+            respuesta = `Pedido confirmado! Gracias por tu compra en ${negocio.nombre}!`;
             sesion.estado = 'inicio';
             sesion.pedido = null;
 
@@ -95,10 +105,10 @@ app.post('/webhook', async (req, res) => {
             respuesta = `Por favor escribenos tu pedido nuevamente.`;
             sesion.estado = 'esperando_pedido';
         } else {
-            respuesta = `Por favor responde SI para confirmar o NO para modificar tu pedido.`;
+            respuesta = `Por favor responde SI o NO.`;
         }
     } else {
-        respuesta = MENU;
+        respuesta = generarMenu(negocio);
         sesion.estado = 'esperando_decision';
     }
 
