@@ -129,10 +129,13 @@ app.get('/panel/:slug/pedidos', async (req, res) => {
         <meta http-equiv="refresh" content="30">
     </head>
     <body>
-        <div class="header">
-            <h1>📋 ${negocio.nombre}</h1>
-            <span>${pedidos.length} pedidos</span>
-        </div>
+<div class="header">
+    <h1>📋 ${negocio.nombre}</h1>
+    <div style="display:flex;align-items:center;gap:10px">
+        <span>${pedidos.length} pedidos</span>
+        <a href="/panel/${req.params.slug}/export" style="background:white;color:#25D366;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:bold;text-decoration:none">⬇️ Excel</a>
+    </div>
+</div>
         <div class="content">`;
 
     if (pedidos.length === 0) {
@@ -160,6 +163,38 @@ app.get('/panel/:slug/pedidos', async (req, res) => {
 
     html += `</div></body></html>`;
     res.send(html);
+});
+
+// Export a Excel
+app.get('/panel/:slug/export', async (req, res) => {
+    const negocio = buscarNegocioPorSlug(req.params.slug);
+    if (!negocio) return res.status(404).send('No encontrado');
+
+    const { desde, hasta } = req.query;
+    let filtro = { slug: req.params.slug };
+
+    if (desde || hasta) {
+        filtro.fecha = {};
+        if (desde) filtro.fecha.$gte = new Date(desde);
+        if (hasta) {
+            const hastaFin = new Date(hasta);
+            hastaFin.setHours(23, 59, 59);
+            filtro.fecha.$lte = hastaFin;
+        }
+    }
+
+    const pedidos = await Pedido.find(filtro).sort({ fecha: -1 });
+
+    let csv = 'Fecha,Cliente,Pedido,Estado\n';
+    pedidos.forEach(p => {
+        const fecha = new Date(p.fecha).toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
+        const pedidoLimpio = p.pedido.replace(/\n/g, ' ').replace(/,/g, ';');
+        csv += `"${fecha}","${p.numero_cliente}","${pedidoLimpio}","${p.estado}"\n`;
+    });
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename=pedidos-${req.params.slug}.csv`);
+    res.send('\uFEFF' + csv);
 });
 
 // Cambiar estado de pedido
