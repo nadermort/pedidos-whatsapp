@@ -209,7 +209,7 @@ app.post('/panel/:slug/pedido/:id/estado', async (req, res) => {
 // Webhook WhatsApp
 // Webhook Meta - verificacion
 app.get('/webhook-meta', (req, res) => {
-    const VERIFY_TOKEN = 'mitoken123';
+    const VERIFY_TOKEN = 'sackval212181';
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
