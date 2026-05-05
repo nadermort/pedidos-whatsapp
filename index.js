@@ -25,7 +25,6 @@ const PedidoSchema = new mongoose.Schema({
 });
 const Pedido = mongoose.model('Pedido', PedidoSchema);
 
-// Guarda nombre y dirección del cliente para no volver a pedirlos
 const ClienteSchema = new mongoose.Schema({
     numero: String,
     nombre: String,
@@ -81,6 +80,75 @@ async function enviarMensaje(phoneNumberId, numeroCliente, texto) {
         }
     } catch (err) {
         console.error('Error enviando mensaje:', err);
+    }
+}
+
+// ─── Imprimir ticket via PrintNode ────────────────────────────────────────────
+async function imprimirTicket(negocio, clienteDB, pedido, fecha) {
+    const apiKey = process.env.PRINTNODE_API_KEY;
+    const printerId = negocio.printerId;
+
+    if (!apiKey || !printerId) {
+        console.log('PrintNode no configurado, omitiendo impresion');
+        return;
+    }
+
+    const linea  = '------------------------------------------------';
+    const lineaD = '================================================';
+
+    function centrar(texto, ancho = 48) {
+        const esp = Math.max(0, Math.floor((ancho - texto.length) / 2));
+        return ' '.repeat(esp) + texto;
+    }
+
+    let ticket = '';
+    ticket += '\n';
+    ticket += centrar(negocio.nombre.toUpperCase()) + '\n';
+    ticket += centrar('Sistema de Pedidos') + '\n';
+    ticket += lineaD + '\n';
+    ticket += `Fecha   : ${fecha}\n`;
+    ticket += linea + '\n';
+    ticket += `Cliente : ${clienteDB?.nombre || 'N/A'}\n`;
+    ticket += `Tel     : ${clienteDB?.numero || 'N/A'}\n`;
+    ticket += `Direccion:\n  ${clienteDB?.direccion || 'N/A'}\n`;
+    ticket += linea + '\n';
+    ticket += 'PEDIDO:\n';
+    ticket += linea + '\n';
+    pedido.split('\n').forEach(l => {
+        if (l.trim()) ticket += `  ${l.trim()}\n`;
+    });
+    ticket += lineaD + '\n';
+    ticket += centrar('Gracias por su compra!') + '\n';
+    ticket += centrar(negocio.nombre) + '\n';
+    ticket += '\n\n\n';
+
+    const ticketBase64 = Buffer.from(ticket).toString('base64');
+
+    try {
+        const credentials = Buffer.from(`${apiKey}:`).toString('base64');
+        const response = await fetch('https://api.printnode.com/printjobs', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Basic ${credentials}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                printerId: printerId,
+                title: `Pedido - ${clienteDB?.nombre || 'Cliente'}`,
+                contentType: 'raw_base64',
+                content: ticketBase64,
+                source: 'PedidosBot'
+            })
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+            console.error('Error PrintNode:', JSON.stringify(data));
+        } else {
+            console.log(`Ticket impreso, job ID: ${data}`);
+        }
+    } catch (err) {
+        console.error('Error imprimiendo ticket:', err);
     }
 }
 
@@ -169,6 +237,7 @@ app.get('/panel/:slug/pedidos', async (req, res) => {
             .estado-cancelado { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; background: #f8d7da; color: #721c24; }
             .btn-entregado { background: #25D366; color: white; border: none; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; margin-left: 8px; }
             .btn-cancelado { background: #dc3545; color: white; border: none; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; margin-left: 5px; }
+            .btn-imprimir { background: #007bff; color: white; border: none; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; margin-left: 5px; }
             .vacio { text-align: center; color: #999; margin-top: 50px; }
         </style>
         <meta http-equiv="refresh" content="30">
@@ -202,6 +271,9 @@ app.get('/panel/:slug/pedidos', async (req, res) => {
                 <form method="POST" action="/panel/${req.params.slug}/pedido/${p._id}/estado" style="display:inline">
                     <button class="btn-entregado" name="estado" value="entregado">✅ Entregado</button>
                     <button class="btn-cancelado" name="estado" value="cancelado">❌ Cancelado</button>
+                </form>
+                <form method="POST" action="/panel/${req.params.slug}/pedido/${p._id}/imprimir" style="display:inline">
+                    <button class="btn-imprimir">🖨️ Imprimir</button>
                 </form>` : ''}
             </div>`;
         });
@@ -209,6 +281,21 @@ app.get('/panel/:slug/pedidos', async (req, res) => {
 
     html += `</div></body></html>`;
     res.send(html);
+});
+
+// Imprimir desde panel
+app.post('/panel/:slug/pedido/:id/imprimir', async (req, res) => {
+    const negocio = buscarNegocioPorSlug(req.params.slug);
+    if (!negocio) return res.status(404).send('No encontrado');
+
+    const pedido = await Pedido.findById(req.params.id);
+    if (!pedido) return res.status(404).send('Pedido no encontrado');
+
+    const clienteDB = await Cliente.findOne({ numero: pedido.numero_cliente });
+    const fecha = new Date(pedido.fecha).toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
+
+    await imprimirTicket(negocio, clienteDB, pedido.pedido, fecha);
+    res.redirect(`/panel/${req.params.slug}/pedidos`);
 });
 
 // Export a Excel
@@ -231,7 +318,7 @@ app.get('/panel/:slug/export', async (req, res) => {
     res.send('\uFEFF' + csv);
 });
 
-// Cambiar estado de pedido
+// Cambiar estado
 app.post('/panel/:slug/pedido/:id/estado', async (req, res) => {
     const negocio = buscarNegocioPorSlug(req.params.slug);
     if (!negocio) return res.status(404).send('No encontrado');
@@ -283,25 +370,18 @@ app.post('/webhook-meta', async (req, res) => {
     console.log(`[${negocio.nombre}] Mensaje de ${numeroCliente}: ${texto}`);
 
     const sesionKey = `${phoneNumberId}_${numeroCliente}`;
-    if (!sesiones[sesionKey]) {
-        sesiones[sesionKey] = { estado: 'inicio' };
-    }
+    if (!sesiones[sesionKey]) sesiones[sesionKey] = { estado: 'inicio' };
     const sesion = sesiones[sesionKey];
 
-    // Buscar datos del cliente en MongoDB
     let clienteDB = await Cliente.findOne({ numero: numeroCliente });
-
     let respuesta = '';
 
-    // Comando global: cambiar dirección en cualquier momento
+    // Comando global
     if (mensajeLower === 'cambiar direccion') {
         sesion.estado = 'cambiando_direccion';
-        respuesta = `Por favor escribe tu nueva direccion de entrega:`;
-        await enviarMensaje(phoneNumberId, numeroCliente, respuesta);
+        await enviarMensaje(phoneNumberId, numeroCliente, `Por favor escribe tu nueva direccion de entrega:`);
         return;
     }
-
-    // ── Estados del flujo ──────────────────────────────────────────────────
 
     if (sesion.estado === 'inicio') {
         if (!clienteDB || !clienteDB.nombre) {
@@ -313,15 +393,13 @@ app.post('/webhook-meta', async (req, res) => {
         }
 
     } else if (sesion.estado === 'esperando_nombre') {
-        const nombre = texto;
         if (!clienteDB) {
-            clienteDB = await Cliente.create({ numero: numeroCliente, nombre });
+            clienteDB = await Cliente.create({ numero: numeroCliente, nombre: texto });
         } else {
-            clienteDB.nombre = nombre;
+            clienteDB.nombre = texto;
             await clienteDB.save();
         }
-        sesion.nombre = nombre;
-        respuesta = generarMenu(negocio, nombre);
+        respuesta = generarMenu(negocio, texto);
         sesion.estado = 'esperando_decision';
 
     } else if (sesion.estado === 'esperando_decision') {
@@ -349,8 +427,9 @@ app.post('/webhook-meta', async (req, res) => {
                 respuesta = `¿Cual es tu direccion de entrega? 📍`;
                 sesion.estado = 'esperando_direccion';
             } else {
-                // Ya tiene dirección guardada, guardar pedido directo
+                const fecha = new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
                 await guardarPedido(negocio, numeroCliente, clienteDB, sesion);
+                await imprimirTicket(negocio, clienteDB, sesion.pedido, fecha);
                 respuesta = `✅ Pedido confirmado!\n\n👤 ${clienteDB.nombre}\n🛒 ${sesion.pedido}\n📍 ${clienteDB.direccion}\n\nGracias por tu compra en ${negocio.nombre}! 🎉`;
                 delete sesiones[sesionKey];
             }
@@ -362,26 +441,26 @@ app.post('/webhook-meta', async (req, res) => {
         }
 
     } else if (sesion.estado === 'esperando_direccion') {
-        const direccion = texto;
         if (!clienteDB) {
-            clienteDB = await Cliente.create({ numero: numeroCliente, direccion });
+            clienteDB = await Cliente.create({ numero: numeroCliente, direccion: texto });
         } else {
-            clienteDB.direccion = direccion;
+            clienteDB.direccion = texto;
             await clienteDB.save();
         }
+        const fecha = new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
         await guardarPedido(negocio, numeroCliente, clienteDB, sesion);
-        respuesta = `✅ Pedido confirmado!\n\n👤 ${clienteDB.nombre}\n🛒 ${sesion.pedido}\n📍 ${direccion}\n\nGracias por tu compra en ${negocio.nombre}! 🎉`;
+        await imprimirTicket(negocio, clienteDB, sesion.pedido, fecha);
+        respuesta = `✅ Pedido confirmado!\n\n👤 ${clienteDB.nombre}\n🛒 ${sesion.pedido}\n📍 ${texto}\n\nGracias por tu compra en ${negocio.nombre}! 🎉`;
         delete sesiones[sesionKey];
 
     } else if (sesion.estado === 'cambiando_direccion') {
-        const nuevaDireccion = texto;
         if (!clienteDB) {
-            clienteDB = await Cliente.create({ numero: numeroCliente, direccion: nuevaDireccion });
+            clienteDB = await Cliente.create({ numero: numeroCliente, direccion: texto });
         } else {
-            clienteDB.direccion = nuevaDireccion;
+            clienteDB.direccion = texto;
             await clienteDB.save();
         }
-        respuesta = `✅ Direccion actualizada: ${nuevaDireccion}\n\nEscribe *HOLA* para continuar con tu pedido.`;
+        respuesta = `✅ Direccion actualizada: ${texto}\n\nEscribe *Hola* para continuar con tu pedido.`;
         delete sesiones[sesionKey];
 
     } else {
@@ -397,7 +476,7 @@ app.post('/webhook-meta', async (req, res) => {
     await enviarMensaje(phoneNumberId, numeroCliente, respuesta);
 });
 
-// ─── Guardar pedido en MongoDB ────────────────────────────────────────────────
+// ─── Guardar pedido ───────────────────────────────────────────────────────────
 async function guardarPedido(negocio, numeroCliente, clienteDB, sesion) {
     const fecha = new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
     await Pedido.create({
