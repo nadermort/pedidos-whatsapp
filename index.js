@@ -38,7 +38,43 @@ function buscarNegocioPorSlug(slug) {
     return Object.values(negocios).find(n => n.slug === slug);
 }
 
-// Panel login
+// ─── Enviar mensaje via Meta Graph API ───────────────────────────────────────
+async function enviarMensaje(numeroCliente, texto) {
+    const token = process.env.META_TOKEN;
+    const phoneNumberId = process.env.META_PHONE_NUMBER_ID;
+
+    const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`;
+
+    const body = {
+        messaging_product: 'whatsapp',
+        to: numeroCliente,
+        type: 'text',
+        text: { body: texto }
+    };
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(body)
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            console.error('Error Meta API:', JSON.stringify(data));
+        } else {
+            console.log(`Mensaje enviado a ${numeroCliente}`);
+        }
+    } catch (err) {
+        console.error('Error enviando mensaje:', err);
+    }
+}
+
+// ─── Panel login ─────────────────────────────────────────────────────────────
 app.get('/panel/:slug', (req, res) => {
     const negocio = buscarNegocioPorSlug(req.params.slug);
     if (!negocio) return res.status(404).send('Negocio no encontrado');
@@ -124,18 +160,17 @@ app.get('/panel/:slug/pedidos', async (req, res) => {
             .btn-entregado { background: #25D366; color: white; border: none; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; margin-left: 8px; }
             .btn-cancelado { background: #dc3545; color: white; border: none; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; margin-left: 5px; }
             .vacio { text-align: center; color: #999; margin-top: 50px; }
-            .export-btn { background: white; color: #25D366; border: 2px solid white; padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: bold; }
         </style>
         <meta http-equiv="refresh" content="30">
     </head>
     <body>
-<div class="header">
-    <h1>📋 ${negocio.nombre}</h1>
-    <div style="display:flex;align-items:center;gap:10px">
-        <span>${pedidos.length} pedidos</span>
-        <a href="/panel/${req.params.slug}/export" style="background:white;color:#25D366;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:bold;text-decoration:none">⬇️ Excel</a>
+    <div class="header">
+        <h1>📋 ${negocio.nombre}</h1>
+        <div style="display:flex;align-items:center;gap:10px">
+            <span>${pedidos.length} pedidos</span>
+            <a href="/panel/${req.params.slug}/export" style="background:white;color:#25D366;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:bold;text-decoration:none">⬇️ Excel</a>
+        </div>
     </div>
-</div>
         <div class="content">`;
 
     if (pedidos.length === 0) {
@@ -206,58 +241,56 @@ app.post('/panel/:slug/pedido/:id/estado', async (req, res) => {
     res.redirect(`/panel/${req.params.slug}/pedidos`);
 });
 
-// Webhook WhatsApp
-// Webhook Meta - verificacion
+// ─── Webhook Meta - verificacion GET ─────────────────────────────────────────
 app.get('/webhook-meta', (req, res) => {
-    const VERIFY_TOKEN = 'sackval212181';
+    const VERIFY_TOKEN = process.env.WEBHOOK_VERIFY_TOKEN || 'sackval212181';
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
 
     if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-        console.log('Webhook verificado');
+        console.log('Webhook verificado correctamente');
         res.status(200).send(challenge);
     } else {
+        console.log('Verificacion fallida');
         res.sendStatus(403);
     }
 });
 
-// Webhook Meta - recibir mensajes
+// ─── Webhook Meta - recibir mensajes POST ─────────────────────────────────────
 app.post('/webhook-meta', async (req, res) => {
-    const body = req.body;
-    
-    if (body.object === 'whatsapp_business_account') {
-        const entry = body.entry?.[0];
-        const change = entry?.changes?.[0];
-        const message = change?.value?.messages?.[0];
-        
-        if (message) {
-            const numeroCliente = message.from;
-            const texto = message.text?.body;
-            const numeroNegocio = change.value.metadata.display_phone_number.replace(/\D/g, '');
-            
-            console.log(`Mensaje de ${numeroCliente}: ${texto}`);
-        }
-    }
-    
+    // Responder 200 inmediatamente para que Meta no reintente
     res.sendStatus(200);
-});
-app.post('/webhook', async (req, res) => {
-    const mensaje = req.body.Body.trim();
-    const numeroCliente = req.body.From.replace('whatsapp:', '');
-    const numeroNegocio = req.body.To.replace('whatsapp:', '');
-    const fecha = new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
-    const mensajeLower = mensaje.toLowerCase();
 
-    const negocio = negocios[numeroNegocio];
+    const body = req.body;
+    if (body.object !== 'whatsapp_business_account') return;
+
+    const entry = body.entry?.[0];
+    const change = entry?.changes?.[0];
+    const value = change?.value;
+    const message = value?.messages?.[0];
+
+    // Ignorar si no es un mensaje de texto
+    if (!message || message.type !== 'text') return;
+
+    const numeroCliente = message.from;            // ej: "521234567890"
+    const texto = message.text?.body?.trim();
+    const mensajeLower = texto?.toLowerCase();
+
+    // Identificar el negocio por el phone_number_id del metadata
+    const phoneNumberId = value?.metadata?.phone_number_id;
+    const negocio = Object.values(negocios).find(n => n.phoneNumberId === phoneNumberId);
 
     if (!negocio) {
-        res.set('Content-Type', 'text/xml');
-        res.send(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>Servicio no disponible.</Message></Response>`);
+        console.log(`Negocio no encontrado para phoneNumberId: ${phoneNumberId}`);
         return;
     }
 
-    const sesionKey = `${numeroNegocio}_${numeroCliente}`;
+    console.log(`[${negocio.nombre}] Mensaje de ${numeroCliente}: ${texto}`);
+
+    const fecha = new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
+    const sesionKey = `${phoneNumberId}_${numeroCliente}`;
+
     if (!sesiones[sesionKey]) {
         sesiones[sesionKey] = { estado: 'inicio' };
     }
@@ -284,8 +317,8 @@ app.post('/webhook', async (req, res) => {
         }
 
     } else if (sesion.estado === 'esperando_pedido') {
-        sesion.pedido = mensaje;
-        respuesta = `Tu pedido es:\n\n${mensaje}\n\nConfirmas?\nResponde SI o NO`;
+        sesion.pedido = texto;
+        respuesta = `Tu pedido es:\n\n${texto}\n\nConfirmas?\nResponde SI o NO`;
         sesion.estado = 'confirmando_pedido';
 
     } else if (sesion.estado === 'confirmando_pedido') {
@@ -316,18 +349,13 @@ app.post('/webhook', async (req, res) => {
         } else {
             respuesta = `Por favor responde SI o NO.`;
         }
+
     } else {
         respuesta = generarMenu(negocio);
         sesion.estado = 'esperando_decision';
     }
 
-    const twiml = respuesta
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-
-    res.set('Content-Type', 'text/xml');
-    res.send(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>${twiml}</Message></Response>`);
+    await enviarMensaje(numeroCliente, respuesta);
 });
 
 const PORT = process.env.PORT || 3000;
