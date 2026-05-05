@@ -9,6 +9,17 @@ const negocios = {
             { nombre: 'Producto 2', precio: 60 },
             { nombre: 'Producto 3', precio: 120 }
         ]
+    },
+    '1151104941418440': {
+        phoneNumberId: '1151104941418440',
+        nombre: 'Flores Gomez',
+        slug: 'flores-gomez',
+        password: 'flores123',
+        productos: [
+            { nombre: 'Producto 1', precio: 20 },
+            { nombre: 'Producto 2', precio: 60 },
+            { nombre: 'Producto 3', precio: 120 }
+        ]
     }
 };
 module.exports = negocios;
