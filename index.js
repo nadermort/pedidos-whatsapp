@@ -11,26 +11,39 @@ mongoose.connect(process.env.MONGODB_URI)
     .then(() => console.log('Conectado a MongoDB'))
     .catch(err => console.log('Error MongoDB:', err));
 
-// Modelo de Pedido
+// ─── Modelos ──────────────────────────────────────────────────────────────────
+
 const PedidoSchema = new mongoose.Schema({
     negocio: String,
     slug: String,
     numero_cliente: String,
+    nombre_cliente: String,
     pedido: String,
+    direccion: String,
     fecha: { type: Date, default: Date.now },
     estado: { type: String, default: 'pendiente' }
 });
 const Pedido = mongoose.model('Pedido', PedidoSchema);
 
-// Sesiones en memoria
+// Guarda nombre y dirección del cliente para no volver a pedirlos
+const ClienteSchema = new mongoose.Schema({
+    numero: String,
+    nombre: String,
+    direccion: String
+});
+const Cliente = mongoose.model('Cliente', ClienteSchema);
+
+// ─── Sesiones en memoria ──────────────────────────────────────────────────────
 const sesiones = {};
 
-function generarMenu(negocio) {
-    let menu = `Bienvenido a ${negocio.nombre}\nNuestros productos:\n\n`;
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function generarMenu(negocio, nombreCliente) {
+    let menu = `Hola ${nombreCliente}, bienvenido a ${negocio.nombre} 👋\n\nNuestros productos:\n\n`;
     negocio.productos.forEach(p => {
         menu += `- ${p.nombre} - $${p.precio} MXN\n`;
     });
-    menu += `\nTe gustaria hacer un pedido?\nResponde SI o NO\nEscribe ASESOR para hablar con alguien`;
+    menu += `\nTe gustaria hacer un pedido?\nResponde *SI* o *NO*\nEscribe *ASESOR* para hablar con alguien\nEscribe *CAMBIAR DIRECCION* para actualizar tu direccion`;
     return menu;
 }
 
@@ -39,10 +52,8 @@ function buscarNegocioPorSlug(slug) {
 }
 
 // ─── Enviar mensaje via Meta Graph API ───────────────────────────────────────
-async function enviarMensaje(numeroCliente, texto) {
+async function enviarMensaje(phoneNumberId, numeroCliente, texto) {
     const token = process.env.META_TOKEN;
-    const phoneNumberId = process.env.META_PHONE_NUMBER_ID;
-
     const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`;
 
     const body = {
@@ -63,7 +74,6 @@ async function enviarMensaje(numeroCliente, texto) {
         });
 
         const data = await response.json();
-
         if (!response.ok) {
             console.error('Error Meta API:', JSON.stringify(data));
         } else {
@@ -74,7 +84,7 @@ async function enviarMensaje(numeroCliente, texto) {
     }
 }
 
-// ─── Panel login ─────────────────────────────────────────────────────────────
+// ─── Panel login ──────────────────────────────────────────────────────────────
 app.get('/panel/:slug', (req, res) => {
     const negocio = buscarNegocioPorSlug(req.params.slug);
     if (!negocio) return res.status(404).send('Negocio no encontrado');
@@ -146,13 +156,13 @@ app.get('/panel/:slug/pedidos', async (req, res) => {
             body { font-family: Arial; margin: 0; background: #f5f5f5; }
             .header { background: #25D366; color: white; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; }
             .header h1 { margin: 0; font-size: 20px; }
-            .header span { font-size: 13px; opacity: 0.9; }
             .content { padding: 20px; }
             .pedido { background: white; padding: 15px; margin: 10px 0; border-radius: 8px; border-left: 4px solid #25D366; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
             .pedido.entregado { border-left-color: #6c757d; opacity: 0.7; }
             .pedido.cancelado { border-left-color: #dc3545; opacity: 0.7; }
             .cliente { color: #666; font-size: 13px; }
             .pedido-texto { margin: 8px 0; font-size: 15px; }
+            .direccion { color: #444; font-size: 13px; margin: 4px 0; }
             .fecha { color: #999; font-size: 12px; margin-bottom: 8px; }
             .estado-pendiente { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; background: #fff3cd; color: #856404; }
             .estado-entregado { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; background: #d4edda; color: #155724; }
@@ -171,7 +181,7 @@ app.get('/panel/:slug/pedidos', async (req, res) => {
             <a href="/panel/${req.params.slug}/export" style="background:white;color:#25D366;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:bold;text-decoration:none">⬇️ Excel</a>
         </div>
     </div>
-        <div class="content">`;
+    <div class="content">`;
 
     if (pedidos.length === 0) {
         html += `<div class="vacio"><p>No hay pedidos aun</p></div>`;
@@ -183,8 +193,9 @@ app.get('/panel/:slug/pedidos', async (req, res) => {
 
             html += `
             <div class="${clasePedido}">
-                <div class="cliente">📱 ${p.numero_cliente}</div>
+                <div class="cliente">👤 ${p.nombre_cliente || 'Sin nombre'} | 📱 ${p.numero_cliente}</div>
                 <div class="pedido-texto">🛒 ${p.pedido.replace(/\n/g, '<br>')}</div>
+                <div class="direccion">📍 ${p.direccion || 'Sin direccion'}</div>
                 <div class="fecha">🕐 ${fecha}</div>
                 <span class="${claseEstado}">${p.estado}</span>
                 ${p.estado === 'pendiente' ? `
@@ -205,26 +216,14 @@ app.get('/panel/:slug/export', async (req, res) => {
     const negocio = buscarNegocioPorSlug(req.params.slug);
     if (!negocio) return res.status(404).send('No encontrado');
 
-    const { desde, hasta } = req.query;
-    let filtro = { slug: req.params.slug };
+    const pedidos = await Pedido.find({ slug: req.params.slug }).sort({ fecha: -1 });
 
-    if (desde || hasta) {
-        filtro.fecha = {};
-        if (desde) filtro.fecha.$gte = new Date(desde);
-        if (hasta) {
-            const hastaFin = new Date(hasta);
-            hastaFin.setHours(23, 59, 59);
-            filtro.fecha.$lte = hastaFin;
-        }
-    }
-
-    const pedidos = await Pedido.find(filtro).sort({ fecha: -1 });
-
-    let csv = 'Fecha,Cliente,Pedido,Estado\n';
+    let csv = 'Fecha,Nombre,Cliente,Pedido,Direccion,Estado\n';
     pedidos.forEach(p => {
         const fecha = new Date(p.fecha).toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
         const pedidoLimpio = p.pedido.replace(/\n/g, ' ').replace(/,/g, ';');
-        csv += `"${fecha}","${p.numero_cliente}","${pedidoLimpio}","${p.estado}"\n`;
+        const direccion = (p.direccion || '').replace(/,/g, ';');
+        csv += `"${fecha}","${p.nombre_cliente || ''}","${p.numero_cliente}","${pedidoLimpio}","${direccion}","${p.estado}"\n`;
     });
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -252,14 +251,12 @@ app.get('/webhook-meta', (req, res) => {
         console.log('Webhook verificado correctamente');
         res.status(200).send(challenge);
     } else {
-        console.log('Verificacion fallida');
         res.sendStatus(403);
     }
 });
 
-// ─── Webhook Meta - recibir mensajes POST ─────────────────────────────────────
+// ─── Webhook Meta - recibir mensajes POST ────────────────────────────────────
 app.post('/webhook-meta', async (req, res) => {
-    // Responder 200 inmediatamente para que Meta no reintente
     res.sendStatus(200);
 
     const body = req.body;
@@ -270,17 +267,14 @@ app.post('/webhook-meta', async (req, res) => {
     const value = change?.value;
     const message = value?.messages?.[0];
 
-    // Ignorar si no es un mensaje de texto
     if (!message || message.type !== 'text') return;
 
-    const numeroCliente = message.from;            // ej: "521234567890"
+    const numeroCliente = message.from;
     const texto = message.text?.body?.trim();
     const mensajeLower = texto?.toLowerCase();
-
-    // Identificar el negocio por el phone_number_id del metadata
     const phoneNumberId = value?.metadata?.phone_number_id;
-    const negocio = Object.values(negocios).find(n => n.phoneNumberId === phoneNumberId);
 
+    const negocio = Object.values(negocios).find(n => n.phoneNumberId === phoneNumberId);
     if (!negocio) {
         console.log(`Negocio no encontrado para phoneNumberId: ${phoneNumberId}`);
         return;
@@ -288,75 +282,140 @@ app.post('/webhook-meta', async (req, res) => {
 
     console.log(`[${negocio.nombre}] Mensaje de ${numeroCliente}: ${texto}`);
 
-    const fecha = new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
     const sesionKey = `${phoneNumberId}_${numeroCliente}`;
-
     if (!sesiones[sesionKey]) {
         sesiones[sesionKey] = { estado: 'inicio' };
     }
-
     const sesion = sesiones[sesionKey];
+
+    // Buscar datos del cliente en MongoDB
+    let clienteDB = await Cliente.findOne({ numero: numeroCliente });
+
     let respuesta = '';
 
+    // Comando global: cambiar dirección en cualquier momento
+    if (mensajeLower === 'cambiar direccion') {
+        sesion.estado = 'cambiando_direccion';
+        respuesta = `Por favor escribe tu nueva direccion de entrega:`;
+        await enviarMensaje(phoneNumberId, numeroCliente, respuesta);
+        return;
+    }
+
+    // ── Estados del flujo ──────────────────────────────────────────────────
+
     if (sesion.estado === 'inicio') {
-        respuesta = generarMenu(negocio);
+        if (!clienteDB || !clienteDB.nombre) {
+            respuesta = `Hola! Bienvenido a ${negocio.nombre} 👋\n\nPara comenzar, ¿como te llamas?`;
+            sesion.estado = 'esperando_nombre';
+        } else {
+            respuesta = generarMenu(negocio, clienteDB.nombre);
+            sesion.estado = 'esperando_decision';
+        }
+
+    } else if (sesion.estado === 'esperando_nombre') {
+        const nombre = texto;
+        if (!clienteDB) {
+            clienteDB = await Cliente.create({ numero: numeroCliente, nombre });
+        } else {
+            clienteDB.nombre = nombre;
+            await clienteDB.save();
+        }
+        sesion.nombre = nombre;
+        respuesta = generarMenu(negocio, nombre);
         sesion.estado = 'esperando_decision';
 
     } else if (sesion.estado === 'esperando_decision') {
         if (mensajeLower === 'si' || mensajeLower === 'sí') {
-            respuesta = `Por favor escribenos tu pedido.\n\nEjemplo:\n1 kg de Producto 1\n2 Producto 2`;
+            respuesta = `Por favor escribenos tu pedido 📝\n\nEjemplo:\n2 Producto 1\n1 Producto 2`;
             sesion.estado = 'esperando_pedido';
         } else if (mensajeLower === 'no') {
-            respuesta = `Hasta luego! Fue un placer atenderte.`;
-            sesion.estado = 'inicio';
+            respuesta = `Hasta luego ${clienteDB?.nombre || ''}! Fue un placer atenderte 😊`;
+            delete sesiones[sesionKey];
         } else if (mensajeLower === 'asesor') {
             respuesta = `En breve un asesor se comunicara contigo. Gracias por tu paciencia.`;
-            sesion.estado = 'inicio';
+            delete sesiones[sesionKey];
         } else {
-            respuesta = `Por favor responde SI, NO o escribe ASESOR.`;
+            respuesta = `Por favor responde *SI*, *NO* o escribe *ASESOR*.`;
         }
 
     } else if (sesion.estado === 'esperando_pedido') {
         sesion.pedido = texto;
-        respuesta = `Tu pedido es:\n\n${texto}\n\nConfirmas?\nResponde SI o NO`;
+        respuesta = `Tu pedido es:\n\n${texto}\n\n¿Confirmas?\nResponde *SI* o *NO*`;
         sesion.estado = 'confirmando_pedido';
 
     } else if (sesion.estado === 'confirmando_pedido') {
         if (mensajeLower === 'si' || mensajeLower === 'sí') {
-            await Pedido.create({
-                negocio: negocio.nombre,
-                slug: negocio.slug,
-                numero_cliente: numeroCliente,
-                pedido: sesion.pedido
-            });
-
-            console.log('================================');
-            console.log(`NUEVO PEDIDO - ${negocio.nombre}`);
-            console.log('================================');
-            console.log(`Fecha:   ${fecha}`);
-            console.log(`Cliente: ${numeroCliente}`);
-            console.log('--------------------------------');
-            console.log(sesion.pedido);
-            console.log('================================');
-
-            respuesta = `Pedido confirmado! Gracias por tu compra en ${negocio.nombre}!`;
-            sesion.estado = 'inicio';
-            sesion.pedido = null;
-
+            if (!clienteDB?.direccion) {
+                respuesta = `¿Cual es tu direccion de entrega? 📍`;
+                sesion.estado = 'esperando_direccion';
+            } else {
+                // Ya tiene dirección guardada, guardar pedido directo
+                await guardarPedido(negocio, numeroCliente, clienteDB, sesion);
+                respuesta = `✅ Pedido confirmado!\n\n👤 ${clienteDB.nombre}\n🛒 ${sesion.pedido}\n📍 ${clienteDB.direccion}\n\nGracias por tu compra en ${negocio.nombre}! 🎉`;
+                delete sesiones[sesionKey];
+            }
         } else if (mensajeLower === 'no') {
-            respuesta = `Por favor escribenos tu pedido nuevamente.`;
+            respuesta = `Por favor escribenos tu pedido nuevamente 📝`;
             sesion.estado = 'esperando_pedido';
         } else {
-            respuesta = `Por favor responde SI o NO.`;
+            respuesta = `Por favor responde *SI* o *NO*.`;
         }
 
+    } else if (sesion.estado === 'esperando_direccion') {
+        const direccion = texto;
+        if (!clienteDB) {
+            clienteDB = await Cliente.create({ numero: numeroCliente, direccion });
+        } else {
+            clienteDB.direccion = direccion;
+            await clienteDB.save();
+        }
+        await guardarPedido(negocio, numeroCliente, clienteDB, sesion);
+        respuesta = `✅ Pedido confirmado!\n\n👤 ${clienteDB.nombre}\n🛒 ${sesion.pedido}\n📍 ${direccion}\n\nGracias por tu compra en ${negocio.nombre}! 🎉`;
+        delete sesiones[sesionKey];
+
+    } else if (sesion.estado === 'cambiando_direccion') {
+        const nuevaDireccion = texto;
+        if (!clienteDB) {
+            clienteDB = await Cliente.create({ numero: numeroCliente, direccion: nuevaDireccion });
+        } else {
+            clienteDB.direccion = nuevaDireccion;
+            await clienteDB.save();
+        }
+        respuesta = `✅ Direccion actualizada: ${nuevaDireccion}\n\nEscribe *HOLA* para continuar con tu pedido.`;
+        delete sesiones[sesionKey];
+
     } else {
-        respuesta = generarMenu(negocio);
-        sesion.estado = 'esperando_decision';
+        if (!clienteDB || !clienteDB.nombre) {
+            respuesta = `Hola! ¿Como te llamas?`;
+            sesion.estado = 'esperando_nombre';
+        } else {
+            respuesta = generarMenu(negocio, clienteDB.nombre);
+            sesion.estado = 'esperando_decision';
+        }
     }
 
-    await enviarMensaje(numeroCliente, respuesta);
+    await enviarMensaje(phoneNumberId, numeroCliente, respuesta);
 });
+
+// ─── Guardar pedido en MongoDB ────────────────────────────────────────────────
+async function guardarPedido(negocio, numeroCliente, clienteDB, sesion) {
+    const fecha = new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
+    await Pedido.create({
+        negocio: negocio.nombre,
+        slug: negocio.slug,
+        numero_cliente: numeroCliente,
+        nombre_cliente: clienteDB?.nombre || '',
+        pedido: sesion.pedido,
+        direccion: clienteDB?.direccion || ''
+    });
+    console.log('================================');
+    console.log(`NUEVO PEDIDO - ${negocio.nombre}`);
+    console.log(`Cliente: ${clienteDB?.nombre} (${numeroCliente})`);
+    console.log(`Pedido:  ${sesion.pedido}`);
+    console.log(`Direc:   ${clienteDB?.direccion}`);
+    console.log(`Fecha:   ${fecha}`);
+    console.log('================================');
+}
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
