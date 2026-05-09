@@ -1,7 +1,7 @@
 const negocios = {
     '1016729868201415': {
         phoneNumberId: '1016729868201415',
-        printerId: 75444357,
+        printerId: 75444369,
         nombre: 'Flores Gomez',
         slug: 'flores-gomez',
         password: 'flores123',
@@ -13,7 +13,7 @@ const negocios = {
     },
     '1151104941418440': {
         phoneNumberId: '1151104941418440',
-        printerId: 75444357,
+        printerId: 75444369,
         nombre: 'Flores Gomez',
         slug: 'flores-gomez',
         password: 'flores123',
