@@ -83,6 +83,35 @@ async function enviarMensaje(phoneNumberId, numeroCliente, texto) {
     }
 }
 
+// ─── Utilidades para formato de ticket ───────────────────────────────────────
+
+const ANCHO = 48;
+
+function centrar(texto) {
+    if (texto.length >= ANCHO) return texto;
+    const esp = Math.floor((ANCHO - texto.length) / 2);
+    return ' '.repeat(esp) + texto;
+}
+
+// Divide un texto largo en líneas de máximo ANCHO caracteres sin cortar palabras
+function wordWrap(texto, indent = '') {
+    const maxAncho = ANCHO - indent.length;
+    const palabras = texto.split(' ');
+    const lineas = [];
+    let lineaActual = '';
+
+    palabras.forEach(palabra => {
+        if ((lineaActual + ' ' + palabra).trim().length <= maxAncho) {
+            lineaActual = (lineaActual + ' ' + palabra).trim();
+        } else {
+            if (lineaActual) lineas.push(indent + lineaActual);
+            lineaActual = palabra;
+        }
+    });
+    if (lineaActual) lineas.push(indent + lineaActual);
+    return lineas.join('\n');
+}
+
 // ─── Imprimir ticket via PrintNode ────────────────────────────────────────────
 async function imprimirTicket(negocio, clienteDB, pedido, fecha) {
     const apiKey = process.env.PRINTNODE_API_KEY;
@@ -93,13 +122,8 @@ async function imprimirTicket(negocio, clienteDB, pedido, fecha) {
         return;
     }
 
-    const linea  = '------------------------------------------------';
-    const lineaD = '================================================';
-
-    function centrar(texto, ancho = 48) {
-        const esp = Math.max(0, Math.floor((ancho - texto.length) / 2));
-        return ' '.repeat(esp) + texto;
-    }
+    const linea  = '-'.repeat(ANCHO);
+    const lineaD = '='.repeat(ANCHO);
 
     let ticket = '';
     ticket += '\n';
@@ -110,13 +134,23 @@ async function imprimirTicket(negocio, clienteDB, pedido, fecha) {
     ticket += linea + '\n';
     ticket += `Cliente : ${clienteDB?.nombre || 'N/A'}\n`;
     ticket += `Tel     : ${clienteDB?.numero || 'N/A'}\n`;
-    ticket += `Direccion:\n  ${clienteDB?.direccion || 'N/A'}\n`;
+    ticket += `Direccion:\n`;
+
+    // Dirección con word wrap
+    const direccion = clienteDB?.direccion || 'N/A';
+    ticket += wordWrap(direccion, '  ') + '\n';
+
     ticket += linea + '\n';
     ticket += 'PEDIDO:\n';
     ticket += linea + '\n';
+
+    // Pedido con word wrap por línea
     pedido.split('\n').forEach(l => {
-        if (l.trim()) ticket += `  ${l.trim()}\n`;
+        if (l.trim()) {
+            ticket += wordWrap(l.trim(), '  ') + '\n';
+        }
     });
+
     ticket += lineaD + '\n';
     ticket += centrar('Gracias por su compra!') + '\n';
     ticket += centrar(negocio.nombre) + '\n';
