@@ -14,6 +14,7 @@ const negocios = {
     '1151104941418440': {
         phoneNumberId: '1151104941418440',
         printerId: 75444369,
+	whatsapp: '5215542232857',  // <- número nuevo
         nombre: 'Flores Gomez',
         slug: 'flores-gomez',
         password: 'flores123',
