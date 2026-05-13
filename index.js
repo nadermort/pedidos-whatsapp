@@ -617,12 +617,22 @@ app.post('/webhook-meta', async (req, res) => {
         return;
     }
 
-    // Comando global
-    if (mensajeLower === 'cambiar direccion') {
-        sesion.estado = 'cambiando_direccion';
-        await enviarMensaje(phoneNumberId, numeroCliente, `Por favor escribe tu nueva direccion de entrega:`);
-        return;
+// Comandos globales
+if (mensajeLower === 'cambiar direccion') {
+    sesion.estado = 'cambiando_direccion';
+    await enviarMensaje(phoneNumberId, numeroCliente, `Por favor escribe tu nueva direccion de entrega:`);
+    return;
+}
+
+if (mensajeLower === 'pago') {
+    if (negocio.clabe) {
+        const msgPago = `💳 Datos para pago:\n\n🏦 Banco: ${negocio.banco}\n👤 Titular: ${negocio.titular}\n🔢 CLABE: ${negocio.clabe}\n\nUna vez realizado tu pago envianos tu comprobante.`;
+        await enviarMensaje(phoneNumberId, numeroCliente, msgPago);
+    } else {
+        await enviarMensaje(phoneNumberId, numeroCliente, `Para informacion de pago comunicate con nosotros directamente.`);
     }
+    return;
+}
 
     if (sesion.estado === 'inicio') {
         if (!clienteDB || !clienteDB.nombre) {
