@@ -93,6 +93,7 @@ function centrar(texto) {
     return ' '.repeat(esp) + texto;
 }
 
+// Divide un texto largo en líneas de máximo ANCHO caracteres sin cortar palabras
 function wordWrap(texto, indent = '') {
     const maxAncho = ANCHO - indent.length;
     const palabras = texto.split(' ');
@@ -134,13 +135,22 @@ async function imprimirTicket(negocio, clienteDB, pedido, fecha) {
     ticket += `Cliente : ${clienteDB?.nombre || 'N/A'}\n`;
     ticket += `Tel     : ${clienteDB?.numero || 'N/A'}\n`;
     ticket += `Direccion:\n`;
-    ticket += wordWrap(clienteDB?.direccion || 'N/A', '  ') + '\n';
+
+    // Dirección con word wrap
+    const direccion = clienteDB?.direccion || 'N/A';
+    ticket += wordWrap(direccion, '  ') + '\n';
+
     ticket += linea + '\n';
     ticket += 'PEDIDO:\n';
     ticket += linea + '\n';
+
+    // Pedido con word wrap por línea
     pedido.split('\n').forEach(l => {
-        if (l.trim()) ticket += wordWrap(l.trim(), '  ') + '\n';
+        if (l.trim()) {
+            ticket += wordWrap(l.trim(), '  ') + '\n';
+        }
     });
+
     ticket += lineaD + '\n';
     ticket += centrar('Gracias por su compra!') + '\n';
     ticket += centrar(negocio.nombre) + '\n';
@@ -175,51 +185,6 @@ async function imprimirTicket(negocio, clienteDB, pedido, fecha) {
         console.error('Error imprimiendo ticket:', err);
     }
 }
-
-// ─── QR por negocio ───────────────────────────────────────────────────────────
-app.get('/qr/:slug', (req, res) => {
-    const negocio = buscarNegocioPorSlug(req.params.slug);
-    if (!negocio) return res.status(404).send('Negocio no encontrado');
-
-    const whatsapp = negocio.whatsapp;
-    if (!whatsapp) return res.status(404).send('Numero de WhatsApp no configurado');
-
-    const mensaje = encodeURIComponent('Hola, quiero hacer un pedido');
-    const waUrl = `https://wa.me/${whatsapp}?text=${mensaje}`;
-    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(waUrl)}`;
-
-    res.send(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>QR - ${negocio.nombre}</title>
-        <style>
-            body { font-family: Arial; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f5f5f5; }
-            .box { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); text-align: center; max-width: 400px; width: 90%; }
-            h2 { color: #25D366; margin-bottom: 5px; }
-            p { color: #666; margin-bottom: 20px; font-size: 14px; }
-            img { border: 4px solid #25D366; border-radius: 12px; margin: 20px 0; }
-            .btn { display: inline-block; margin-top: 10px; padding: 12px 24px; background: #25D366; color: white; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 15px; }
-            .btn:hover { background: #1ea855; }
-            .instruccion { background: #f0fdf4; border: 1px solid #25D366; border-radius: 8px; padding: 12px; margin-top: 20px; font-size: 13px; color: #444; }
-        </style>
-    </head>
-    <body>
-        <div class="box">
-            <h2>📱 ${negocio.nombre}</h2>
-            <p>Escanea el codigo QR para hacer tu pedido por WhatsApp</p>
-            <img src="${qrUrl}" alt="QR WhatsApp" width="250" height="250">
-            <br>
-            <a href="${waUrl}" class="btn">Abrir WhatsApp</a>
-            <div class="instruccion">
-                📌 Imprime este QR y colócalo en tu negocio para que tus clientes puedan pedir facilmente
-            </div>
-        </div>
-    </body>
-    </html>`);
-});
 
 // ─── Panel login ──────────────────────────────────────────────────────────────
 app.get('/panel/:slug', (req, res) => {
@@ -316,7 +281,6 @@ app.get('/panel/:slug/pedidos', async (req, res) => {
         <h1>📋 ${negocio.nombre}</h1>
         <div style="display:flex;align-items:center;gap:10px">
             <span>${pedidos.length} pedidos</span>
-            <a href="/qr/${req.params.slug}" target="_blank" style="background:white;color:#25D366;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:bold;text-decoration:none">📱 QR</a>
             <a href="/panel/${req.params.slug}/export" style="background:white;color:#25D366;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:bold;text-decoration:none">⬇️ Excel</a>
         </div>
     </div>
