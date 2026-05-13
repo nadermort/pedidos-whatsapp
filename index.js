@@ -659,11 +659,6 @@ app.post('/webhook-meta', async (req, res) => {
 
     } else if (sesion.estado === 'esperando_pedido') {
         sesion.pedido = texto;
-        respuesta = `Por favor escribenos tu pedido 📝\n\nEjemplo:\n2 Producto 1\n1 Producto 2`;
-        sesion.estado = 'esperando_pedido';
-
-    } else if (sesion.estado === 'esperando_pedido') {
-        sesion.pedido = texto;
 
         if (!clienteDB?.direccion) {
             respuesta = `¿Cual es tu direccion de entrega? 📍`;
