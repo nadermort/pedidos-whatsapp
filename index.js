@@ -32,6 +32,24 @@ const ClienteSchema = new mongoose.Schema({
 });
 const Cliente = mongoose.model('Cliente', ClienteSchema);
 
+// Modelo de conversación activa (chats en espera de precio)
+const ConversacionSchema = new mongoose.Schema({
+    slug: String,
+    phoneNumberId: String,
+    numero_cliente: String,
+    nombre_cliente: String,
+    pedido: String,
+    direccion: String,
+    mensajes: [{
+        de: String, // 'cliente' o 'negocio'
+        texto: String,
+        fecha: { type: Date, default: Date.now }
+    }],
+    estado: { type: String, default: 'esperando_negocio' }, // esperando_negocio, confirmado
+    fecha: { type: Date, default: Date.now }
+});
+const Conversacion = mongoose.model('Conversacion', ConversacionSchema);
+
 // ─── Sesiones en memoria ──────────────────────────────────────────────────────
 const sesiones = {};
 
@@ -202,7 +220,6 @@ app.get('/qr/:slug', (req, res) => {
             p { color: #666; margin-bottom: 20px; font-size: 14px; }
             img { border: 4px solid #25D366; border-radius: 12px; margin: 20px 0; }
             .btn { display: inline-block; margin-top: 10px; padding: 12px 24px; background: #25D366; color: white; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 15px; }
-            .btn:hover { background: #1ea855; }
             .instruccion { background: #f0fdf4; border: 1px solid #25D366; border-radius: 8px; padding: 12px; margin-top: 20px; font-size: 13px; color: #444; }
         </style>
     </head>
@@ -281,6 +298,7 @@ app.get('/panel/:slug/pedidos', async (req, res) => {
     if (!negocio) return res.status(404).send('Negocio no encontrado');
 
     const pedidos = await Pedido.find({ slug: req.params.slug }).sort({ fecha: -1 }).limit(50);
+    const chatsActivos = await Conversacion.find({ slug: req.params.slug, estado: 'esperando_negocio' }).sort({ fecha: -1 });
 
     let html = `
     <!DOCTYPE html>
@@ -293,10 +311,15 @@ app.get('/panel/:slug/pedidos', async (req, res) => {
             body { font-family: Arial; margin: 0; background: #f5f5f5; }
             .header { background: #25D366; color: white; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; }
             .header h1 { margin: 0; font-size: 20px; }
-            .content { padding: 20px; }
+            .tabs { display: flex; background: white; border-bottom: 2px solid #eee; }
+            .tab { padding: 12px 24px; cursor: pointer; font-size: 14px; font-weight: bold; color: #666; border-bottom: 3px solid transparent; margin-bottom: -2px; }
+            .tab.active { color: #25D366; border-bottom-color: #25D366; }
+            .tab-content { display: none; padding: 20px; }
+            .tab-content.active { display: block; }
             .pedido { background: white; padding: 15px; margin: 10px 0; border-radius: 8px; border-left: 4px solid #25D366; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
             .pedido.entregado { border-left-color: #6c757d; opacity: 0.7; }
             .pedido.cancelado { border-left-color: #dc3545; opacity: 0.7; }
+            .chat-card { background: white; padding: 15px; margin: 10px 0; border-radius: 8px; border-left: 4px solid #f0ad4e; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
             .cliente { color: #666; font-size: 13px; }
             .pedido-texto { margin: 8px 0; font-size: 15px; }
             .direccion { color: #444; font-size: 13px; margin: 4px 0; }
@@ -307,20 +330,40 @@ app.get('/panel/:slug/pedidos', async (req, res) => {
             .btn-entregado { background: #25D366; color: white; border: none; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; margin-left: 8px; }
             .btn-cancelado { background: #dc3545; color: white; border: none; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; margin-left: 5px; }
             .btn-imprimir { background: #007bff; color: white; border: none; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; margin-left: 5px; }
+            .btn-confirmar { background: #25D366; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; margin-top: 8px; }
+            .chat-mensajes { background: #f5f5f5; border-radius: 8px; padding: 10px; margin: 8px 0; max-height: 200px; overflow-y: auto; }
+            .msg { margin: 5px 0; padding: 6px 10px; border-radius: 8px; font-size: 13px; max-width: 80%; }
+            .msg.cliente { background: white; border: 1px solid #ddd; align-self: flex-start; }
+            .msg.negocio { background: #dcf8c6; margin-left: auto; text-align: right; }
+            .msg-container { display: flex; flex-direction: column; }
+            .reply-box { display: flex; gap: 8px; margin-top: 8px; }
+            .reply-input { flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
+            .btn-reply { background: #25D366; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+            .badge { background: #dc3545; color: white; border-radius: 50%; padding: 2px 7px; font-size: 11px; margin-left: 5px; }
             .vacio { text-align: center; color: #999; margin-top: 50px; }
         </style>
-        <meta http-equiv="refresh" content="30">
+        <meta http-equiv="refresh" content="15">
     </head>
     <body>
     <div class="header">
         <h1>📋 ${negocio.nombre}</h1>
         <div style="display:flex;align-items:center;gap:10px">
-            <span>${pedidos.length} pedidos</span>
-            <a href="/qr/${req.params.slug}" target="_blank" style="background:white;color:#25D366;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:bold;text-decoration:none">📱 QR</a>
-            <a href="/panel/${req.params.slug}/export" style="background:white;color:#25D366;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:bold;text-decoration:none">⬇️ Excel</a>
+            <a href="/qr/${req.params.slug}" target="_blank" style="background:white;color:#25D366;padding:6px 14px;border-radius:8px;font-size:13px;font-weight:bold;text-decoration:none">📱 QR</a>
+            <a href="/panel/${req.params.slug}/export" style="background:white;color:#25D366;padding:6px 14px;border-radius:8px;font-size:13px;font-weight:bold;text-decoration:none">⬇️ Excel</a>
         </div>
     </div>
-    <div class="content">`;
+
+    <div class="tabs">
+        <div class="tab ${chatsActivos.length === 0 ? 'active' : ''}" onclick="showTab('pedidos')">
+            📦 Pedidos <span style="color:#999;font-weight:normal">(${pedidos.length})</span>
+        </div>
+        <div class="tab ${chatsActivos.length > 0 ? 'active' : ''}" onclick="showTab('chats')">
+            💬 Chats activos
+            ${chatsActivos.length > 0 ? `<span class="badge">${chatsActivos.length}</span>` : ''}
+        </div>
+    </div>
+
+    <div id="tab-pedidos" class="tab-content ${chatsActivos.length === 0 ? 'active' : ''}">`;
 
     if (pedidos.length === 0) {
         html += `<div class="vacio"><p>No hay pedidos aun</p></div>`;
@@ -349,8 +392,121 @@ app.get('/panel/:slug/pedidos', async (req, res) => {
         });
     }
 
-    html += `</div></body></html>`;
+    html += `</div>
+    <div id="tab-chats" class="tab-content ${chatsActivos.length > 0 ? 'active' : ''}">`;
+
+    if (chatsActivos.length === 0) {
+        html += `<div class="vacio"><p>No hay chats activos</p></div>`;
+    } else {
+        chatsActivos.forEach(conv => {
+            const fecha = new Date(conv.fecha).toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
+            html += `
+            <div class="chat-card">
+                <div class="cliente">👤 ${conv.nombre_cliente || 'Sin nombre'} | 📱 ${conv.numero_cliente}</div>
+                <div class="pedido-texto">🛒 ${conv.pedido.replace(/\n/g, '<br>')}</div>
+                <div class="direccion">📍 ${conv.direccion || 'Sin direccion'}</div>
+                <div class="fecha">🕐 ${fecha}</div>
+                <div class="chat-mensajes">
+                    <div class="msg-container">
+                        ${conv.mensajes.map(m => `
+                            <div class="msg ${m.de}">
+                                <strong>${m.de === 'cliente' ? '👤' : '🏪'}</strong> ${m.texto}
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+                <form method="POST" action="/panel/${req.params.slug}/chat/${conv._id}/responder" style="margin-top:8px">
+                    <div class="reply-box">
+                        <input class="reply-input" type="text" name="mensaje" placeholder="Escribe tu respuesta..." required>
+                        <button class="btn-reply" type="submit">Enviar</button>
+                    </div>
+                </form>
+                <form method="POST" action="/panel/${req.params.slug}/chat/${conv._id}/confirmar" style="margin-top:5px">
+                    <button class="btn-confirmar" type="submit">✅ CONFIRMAR PEDIDO — Imprimir ticket</button>
+                </form>
+            </div>`;
+        });
+    }
+
+    html += `</div>
+    <script>
+        function showTab(tab) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            document.getElementById('tab-' + tab).classList.add('active');
+            event.target.classList.add('active');
+        }
+    </script>
+    </body></html>`;
+
     res.send(html);
+});
+
+// ─── Responder desde panel ────────────────────────────────────────────────────
+app.post('/panel/:slug/chat/:id/responder', async (req, res) => {
+    const negocio = buscarNegocioPorSlug(req.params.slug);
+    if (!negocio) return res.status(404).send('No encontrado');
+
+    const conv = await Conversacion.findById(req.params.id);
+    if (!conv) return res.status(404).send('Conversacion no encontrada');
+
+    const mensaje = req.body.mensaje;
+
+    // Agregar mensaje al historial
+    conv.mensajes.push({ de: 'negocio', texto: mensaje });
+    await conv.save();
+
+    // Enviar al cliente por WhatsApp
+    await enviarMensaje(conv.phoneNumberId, conv.numero_cliente, mensaje);
+
+    res.redirect(`/panel/${req.params.slug}/pedidos`);
+});
+
+// ─── Confirmar pedido desde panel ────────────────────────────────────────────
+app.post('/panel/:slug/chat/:id/confirmar', async (req, res) => {
+    const negocio = buscarNegocioPorSlug(req.params.slug);
+    if (!negocio) return res.status(404).send('No encontrado');
+
+    const conv = await Conversacion.findById(req.params.id);
+    if (!conv) return res.status(404).send('Conversacion no encontrada');
+
+    const clienteDB = await Cliente.findOne({ numero: conv.numero_cliente });
+    const fecha = new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
+
+    // Guardar pedido en BD
+    await Pedido.create({
+        negocio: negocio.nombre,
+        slug: negocio.slug,
+        numero_cliente: conv.numero_cliente,
+        nombre_cliente: conv.nombre_cliente,
+        pedido: conv.pedido,
+        direccion: conv.direccion
+    });
+
+    // Imprimir ticket
+    await imprimirTicket(negocio, clienteDB, conv.pedido, fecha);
+
+    // Notificar al cliente
+    await enviarMensaje(conv.phoneNumberId, conv.numero_cliente,
+        `✅ Pedido confirmado!\n\n👤 ${conv.nombre_cliente}\n🛒 ${conv.pedido}\n📍 ${conv.direccion}\n\nGracias por tu compra en ${negocio.nombre}! 🎉`
+    );
+
+    // Cerrar conversación
+    conv.estado = 'confirmado';
+    await conv.save();
+
+    // Limpiar sesión
+    const sesionKey = `${conv.phoneNumberId}_${conv.numero_cliente}`;
+    delete sesiones[sesionKey];
+
+    console.log('================================');
+    console.log(`PEDIDO CONFIRMADO - ${negocio.nombre}`);
+    console.log(`Cliente: ${conv.nombre_cliente} (${conv.numero_cliente})`);
+    console.log(`Pedido:  ${conv.pedido}`);
+    console.log(`Fecha:   ${fecha}`);
+    console.log('================================');
+
+    res.redirect(`/panel/${req.params.slug}/pedidos`);
 });
 
 // Imprimir desde panel
@@ -446,6 +602,21 @@ app.post('/webhook-meta', async (req, res) => {
     let clienteDB = await Cliente.findOne({ numero: numeroCliente });
     let respuesta = '';
 
+    // Si hay una conversación activa, agregar mensaje al historial
+    const convActiva = await Conversacion.findOne({
+        slug: negocio.slug,
+        numero_cliente: numeroCliente,
+        estado: 'esperando_negocio'
+    });
+
+    if (convActiva) {
+        // Agregar mensaje del cliente al historial
+        convActiva.mensajes.push({ de: 'cliente', texto });
+        await convActiva.save();
+        // No hacer nada más — ella responde desde el panel
+        return;
+    }
+
     // Comando global
     if (mensajeLower === 'cambiar direccion') {
         sesion.estado = 'cambiando_direccion';
@@ -488,26 +659,28 @@ app.post('/webhook-meta', async (req, res) => {
 
     } else if (sesion.estado === 'esperando_pedido') {
         sesion.pedido = texto;
-        respuesta = `Tu pedido es:\n\n${texto}\n\n¿Confirmas?\nResponde *SI* o *NO*`;
-        sesion.estado = 'confirmando_pedido';
+        respuesta = `Por favor escribenos tu pedido 📝\n\nEjemplo:\n2 Producto 1\n1 Producto 2`;
+        sesion.estado = 'esperando_pedido';
 
-    } else if (sesion.estado === 'confirmando_pedido') {
-        if (mensajeLower === 'si' || mensajeLower === 'sí') {
-            if (!clienteDB?.direccion) {
-                respuesta = `¿Cual es tu direccion de entrega? 📍`;
-                sesion.estado = 'esperando_direccion';
-            } else {
-                const fecha = new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
-                await guardarPedido(negocio, numeroCliente, clienteDB, sesion);
-                await imprimirTicket(negocio, clienteDB, sesion.pedido, fecha);
-                respuesta = `✅ Pedido confirmado!\n\n👤 ${clienteDB.nombre}\n🛒 ${sesion.pedido}\n📍 ${clienteDB.direccion}\n\nGracias por tu compra en ${negocio.nombre}! 🎉`;
-                delete sesiones[sesionKey];
-            }
-        } else if (mensajeLower === 'no') {
-            respuesta = `Por favor escribenos tu pedido nuevamente 📝`;
-            sesion.estado = 'esperando_pedido';
+    } else if (sesion.estado === 'esperando_pedido') {
+        sesion.pedido = texto;
+
+        if (!clienteDB?.direccion) {
+            respuesta = `¿Cual es tu direccion de entrega? 📍`;
+            sesion.estado = 'esperando_direccion';
         } else {
-            respuesta = `Por favor responde *SI* o *NO*.`;
+            // Crear conversación activa para que ella responda precio
+            await Conversacion.create({
+                slug: negocio.slug,
+                phoneNumberId,
+                numero_cliente: numeroCliente,
+                nombre_cliente: clienteDB?.nombre || '',
+                pedido: texto,
+                direccion: clienteDB?.direccion || '',
+                mensajes: [{ de: 'cliente', texto }]
+            });
+            respuesta = `Recibimos tu pedido 📝\n\nEn breve te confirmamos precio y disponibilidad.`;
+            sesion.estado = 'inicio';
         }
 
     } else if (sesion.estado === 'esperando_direccion') {
@@ -517,11 +690,20 @@ app.post('/webhook-meta', async (req, res) => {
             clienteDB.direccion = texto;
             await clienteDB.save();
         }
-        const fecha = new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
-        await guardarPedido(negocio, numeroCliente, clienteDB, sesion);
-        await imprimirTicket(negocio, clienteDB, sesion.pedido, fecha);
-        respuesta = `✅ Pedido confirmado!\n\n👤 ${clienteDB.nombre}\n🛒 ${sesion.pedido}\n📍 ${texto}\n\nGracias por tu compra en ${negocio.nombre}! 🎉`;
-        delete sesiones[sesionKey];
+        sesion.direccion = texto;
+
+        // Crear conversación activa
+        await Conversacion.create({
+            slug: negocio.slug,
+            phoneNumberId,
+            numero_cliente: numeroCliente,
+            nombre_cliente: clienteDB?.nombre || '',
+            pedido: sesion.pedido,
+            direccion: texto,
+            mensajes: [{ de: 'cliente', texto: sesion.pedido }]
+        });
+        respuesta = `Recibimos tu pedido 📝\n\nEn breve te confirmamos precio y disponibilidad.`;
+        sesion.estado = 'inicio';
 
     } else if (sesion.estado === 'cambiando_direccion') {
         if (!clienteDB) {
@@ -543,7 +725,9 @@ app.post('/webhook-meta', async (req, res) => {
         }
     }
 
-    await enviarMensaje(phoneNumberId, numeroCliente, respuesta);
+    if (respuesta) {
+        await enviarMensaje(phoneNumberId, numeroCliente, respuesta);
+    }
 });
 
 // ─── Guardar pedido ───────────────────────────────────────────────────────────
