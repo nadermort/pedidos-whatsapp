@@ -206,7 +206,6 @@ app.get('/qr/:slug', function(req, res) {
 app.get('/panel/:slug', function(req, res) {
     const negocio = buscarNegocioPorSlug(req.params.slug);
     if (!negocio) return res.status(404).send('Negocio no encontrado');
-
     res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Panel - ' + negocio.nombre + '</title><style>body{font-family:Arial;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#f5f5f5;}.box{background:white;padding:40px;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.1);text-align:center;width:300px;}h2{color:#25D366;margin-bottom:5px;}p{color:#666;margin-bottom:20px;}input{width:100%;padding:10px;margin:10px 0;border:1px solid #ddd;border-radius:8px;box-sizing:border-box;font-size:15px;}button{width:100%;padding:12px;background:#25D366;color:white;border:none;border-radius:8px;font-size:16px;cursor:pointer;}button:hover{background:#1ea855;}</style></head><body><div class="box"><h2>' + negocio.nombre + '</h2><p>Panel de pedidos</p><form method="POST" action="/panel/' + req.params.slug + '/login"><input type="password" name="password" placeholder="Contrasena" required><button type="submit">Entrar</button></form></div></body></html>');
 });
 
@@ -342,9 +341,11 @@ app.get('/panel/:slug/pedidos', async function(req, res) {
             html += '<form method="POST" action="/panel/' + req.params.slug + '/chat/' + conv._id + '/confirmar">';
             html += '<button class="btn-confirmar" type="submit">✅ CONFIRMAR PEDIDO — Imprimir ticket</button>';
             html += '</form>';
-            html += '<form method="POST" action="/panel/' + req.params.slug + '/chat/' + conv._id + '/cerrar">';
-            html += '<button class="btn-cerrar" type="submit">🔒 CERRAR CHAT</button>';
-            html += '</form>';
+            if (esTransferencia) {
+                html += '<form method="POST" action="/panel/' + req.params.slug + '/chat/' + conv._id + '/cerrar">';
+                html += '<button class="btn-cerrar" type="submit">🔒 CERRAR CHAT — Pago verificado</button>';
+                html += '</form>';
+            }
             html += '</div>';
         });
     }
@@ -397,29 +398,30 @@ app.post('/panel/:slug/chat/:id/confirmar', async function(req, res) {
         '\n\nGracias por tu compra en ' + negocio.nombre + '!'
     );
 
-    // Mantener chat abierto para seguimiento de pago
-    conv.mensajes.push({ de: 'negocio', texto: 'Pedido confirmado. En espera de pago.' });
-    await conv.save();
+    // Efectivo: cerrar chat automaticamente
+    // Transferencia: mantener abierto hasta verificar pago
+    if (conv.metodo_pago === 'TRANSFERENCIA') {
+        conv.mensajes.push({ de: 'negocio', texto: 'Pedido confirmado. En espera de verificacion de pago.' });
+        await conv.save();
+    } else {
+        conv.estado = 'cerrado';
+        await conv.save();
+        const sesionKey = conv.phoneNumberId + '_' + conv.numero_cliente;
+        delete sesiones[sesionKey];
+    }
 
     console.log('PEDIDO CONFIRMADO - ' + negocio.nombre + ' | ' + conv.nombre_cliente + ' | ' + conv.metodo_pago);
-
     res.redirect('/panel/' + req.params.slug + '/pedidos');
 });
 
-// Cerrar chat
+// Cerrar chat (transferencia verificada)
 app.post('/panel/:slug/chat/:id/cerrar', async function(req, res) {
-    const negocio = buscarNegocioPorSlug(req.params.slug);
-    if (!negocio) return res.status(404).send('No encontrado');
-
     const conv = await Conversacion.findById(req.params.id);
     if (!conv) return res.status(404).send('No encontrado');
-
     conv.estado = 'cerrado';
     await conv.save();
-
     const sesionKey = conv.phoneNumberId + '_' + conv.numero_cliente;
     delete sesiones[sesionKey];
-
     res.redirect('/panel/' + req.params.slug + '/pedidos');
 });
 
@@ -593,12 +595,18 @@ app.post('/webhook-meta', async function(req, res) {
         sesion.estado = 'esperando_pago';
 
     } else if (sesion.estado === 'esperando_pago') {
-        if (mensajeLower === 'efectivo' || mensajeLower === 'transferencia') {
-            const metodoPago = mensajeLower === 'efectivo' ? 'EFECTIVO' : 'TRANSFERENCIA';
-            sesion.metodo_pago = metodoPago;
+        // Detectar efectivo o transferencia aunque haya errores de ortografia
+        if (mensajeLower.includes('efect')) {
+            sesion.metodo_pago = 'EFECTIVO';
+        } else if (mensajeLower.includes('transfer')) {
+            sesion.metodo_pago = 'TRANSFERENCIA';
+        } else {
+            respuesta = 'Por favor responde *EFECTIVO* o *TRANSFERENCIA*.';
+        }
 
+        if (sesion.metodo_pago) {
             // Si es transferencia, mandar datos bancarios
-            if (metodoPago === 'TRANSFERENCIA' && negocio.clabe) {
+            if (sesion.metodo_pago === 'TRANSFERENCIA' && negocio.clabe) {
                 await enviarMensaje(phoneNumberId, numeroCliente,
                     'Datos para tu transferencia:\n\nBanco: ' + negocio.banco +
                     '\nTitular: ' + negocio.titular +
@@ -615,14 +623,13 @@ app.post('/webhook-meta', async function(req, res) {
                 nombre_cliente: clienteDB ? clienteDB.nombre : '',
                 pedido: sesion.pedido,
                 direccion: clienteDB ? clienteDB.direccion : (sesion.direccion || ''),
-                metodo_pago: metodoPago,
+                metodo_pago: sesion.metodo_pago,
                 mensajes: [{ de: 'cliente', texto: sesion.pedido }]
             });
 
             respuesta = 'Recibimos tu pedido!\n\nEn breve te confirmamos precio y disponibilidad.';
             sesion.estado = 'inicio';
-        } else {
-            respuesta = 'Por favor responde *EFECTIVO* o *TRANSFERENCIA*.';
+            sesion.metodo_pago = null;
         }
 
     } else if (sesion.estado === 'cambiando_direccion') {
