@@ -58,9 +58,7 @@ const sesiones = {};
 function generarMenu(negocio, nombreCliente) {
     let menu = `Hola ${nombreCliente}, bienvenido a ${negocio.nombre} 👋\n\nNuestros productos:\n\n`;
     negocio.productos.forEach(p => {
-        menu += `- ${p.nombre} - $${p.precio} MXN\n`;
-    });
-    menu += `\nTe gustaria hacer un pedido?\nResponde *SI* o *NO*\nEscribe *ASESOR* para hablar con alguien\nEscribe *CAMBIAR DIRECCION* para actualizar tu direccion`;
+        menu += `\nTe gustaria hacer un pedido?\nResponde *SI* o *NO*\nEscribe *PAGO* para ver datos de transferencia\nEscribe *CAMBIAR DIRECCION* para actualizar tu direccion`;
     return menu;
 }
 
