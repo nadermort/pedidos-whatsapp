@@ -24,7 +24,7 @@ const ConversacionSchema = new mongoose.Schema({
     slug: String, phoneNumberId: String, numero_cliente: String, nombre_cliente: String,
     pedido: String, direccion: String, metodo_pago: String,
     pedido_confirmado: { type: Boolean, default: false },
-    mensajes: [{ de: String, texto: String, tipo: { type: String, default: 'texto' }, media_url: String, fecha: { type: Date, default: Date.now } }],
+    mensajes: [{ de: String, texto: String, tipo: { type: String, default: 'texto' }, imagen_base64: String, imagen_tipo: String, fecha: { type: Date, default: Date.now } }],
     estado: { type: String, default: 'esperando_negocio' },
     fecha: { type: Date, default: Date.now }
 });
@@ -61,15 +61,31 @@ async function enviarMensaje(phoneNumberId, numeroCliente, texto) {
     } catch (err) { console.error('Error enviando mensaje:', err); }
 }
 
-async function obtenerUrlImagen(mediaId) {
+// Descargar imagen de Meta y convertir a base64
+async function descargarImagen(mediaId) {
     const token = process.env.META_TOKEN;
     try {
-        const response = await fetch('https://graph.facebook.com/v19.0/' + mediaId, {
+        // Paso 1: obtener URL de la imagen
+        const infoRes = await fetch('https://graph.facebook.com/v19.0/' + mediaId, {
             headers: { 'Authorization': 'Bearer ' + token }
         });
-        const data = await response.json();
-        return data.url || null;
-    } catch (err) { return null; }
+        const info = await infoRes.json();
+        if (!info.url) return null;
+
+        // Paso 2: descargar la imagen con el token
+        const imgRes = await fetch(info.url, {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        if (!imgRes.ok) return null;
+
+        const contentType = imgRes.headers.get('content-type') || 'image/jpeg';
+        const buffer = await imgRes.arrayBuffer();
+        const base64 = Buffer.from(buffer).toString('base64');
+        return { base64: base64, tipo: contentType };
+    } catch (err) {
+        console.error('Error descargando imagen:', err);
+        return null;
+    }
 }
 
 const ANCHO = 48;
@@ -214,7 +230,7 @@ app.get('/panel/:slug/pedidos', async function(req, res) {
     html += '.bubble.cliente{background:white;border-radius:12px 12px 12px 0;align-self:flex-start;box-shadow:0 1px 2px rgba(0,0,0,0.1);}';
     html += '.bubble.negocio{background:#DCF8C6;border-radius:12px 12px 0 12px;align-self:flex-end;box-shadow:0 1px 2px rgba(0,0,0,0.1);}';
     html += '.bubble-hora{font-size:10px;color:#999;margin-top:3px;text-align:right;}';
-    html += '.bubble a{color:#075E54;font-weight:bold;text-decoration:none;}';
+    html += '.bubble img{max-width:220px;border-radius:8px;display:block;margin-bottom:4px;}';
     html += '.chat-input-bar{background:white;padding:8px 12px;display:flex;align-items:center;gap:8px;flex-shrink:0;border-top:1px solid #eee;}';
     html += '.chat-input{flex:1;padding:10px 16px;border:none;border-radius:24px;background:#f0f0f0;font-size:14px;font-family:inherit;outline:none;}';
     html += '.send-btn{width:44px;height:44px;background:#25D366;border:none;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:18px;flex-shrink:0;}';
@@ -295,8 +311,8 @@ app.get('/panel/:slug/pedidos', async function(req, res) {
         html += '<div class="chat-messages">';
         conv.mensajes.forEach(function(m) {
             html += '<div class="bubble ' + m.de + '">';
-            if (m.tipo === 'imagen' && m.media_url) {
-                html += '<a href="' + m.media_url + '" target="_blank">📷 Ver comprobante</a>';
+            if (m.tipo === 'imagen' && m.imagen_base64) {
+                html += '<img src="data:' + (m.imagen_tipo || 'image/jpeg') + ';base64,' + m.imagen_base64 + '" alt="Comprobante">';
             } else {
                 html += m.texto;
             }
@@ -413,9 +429,13 @@ app.post('/webhook-meta', async function(req, res) {
         if (convActiva) {
             if (tipoMensaje === 'image') {
                 const mediaId = message.image && message.image.id;
-                let mediaUrl = null;
-                try { mediaUrl = mediaId ? await obtenerUrlImagen(mediaId) : null; } catch(e) { console.log('Error imagen:', e); }
-                convActiva.mensajes.push({ de: 'cliente', texto: 'Imagen recibida', tipo: 'imagen', media_url: mediaUrl });
+                let imgData = null;
+                try { imgData = mediaId ? await descargarImagen(mediaId) : null; } catch(e) { console.log('Error imagen:', e); }
+                if (imgData) {
+                    convActiva.mensajes.push({ de: 'cliente', texto: 'Comprobante de pago', tipo: 'imagen', imagen_base64: imgData.base64, imagen_tipo: imgData.tipo });
+                } else {
+                    convActiva.mensajes.push({ de: 'cliente', texto: 'Imagen recibida (no se pudo cargar)' });
+                }
             } else if (tipoMensaje === 'text') {
                 const texto = message.text && message.text.body ? message.text.body.trim() : '';
                 convActiva.mensajes.push({ de: 'cliente', texto: texto });
