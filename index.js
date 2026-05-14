@@ -130,7 +130,7 @@ async function imprimirTicket(negocio, clienteDB, pedido, fecha, metodoPago) {
         });
         const data = await response.json();
         if (!response.ok) { console.error('Error PrintNode:', JSON.stringify(data)); }
-        else { console.log('Ticket impreso, job ID: ' + data); }
+        else { console.log('Ticket impreso: ' + data); }
     } catch (err) { console.error('Error imprimiendo:', err); }
 }
 
@@ -214,7 +214,7 @@ app.get('/panel/:slug/pedidos', async function(req, res) {
     html += '.bubble.cliente{background:white;border-radius:12px 12px 12px 0;align-self:flex-start;box-shadow:0 1px 2px rgba(0,0,0,0.1);}';
     html += '.bubble.negocio{background:#DCF8C6;border-radius:12px 12px 0 12px;align-self:flex-end;box-shadow:0 1px 2px rgba(0,0,0,0.1);}';
     html += '.bubble-hora{font-size:10px;color:#999;margin-top:3px;text-align:right;}';
-    html += '.bubble img{max-width:200px;border-radius:8px;display:block;}';
+    html += '.bubble a{color:#075E54;font-weight:bold;text-decoration:none;}';
     html += '.chat-input-bar{background:white;padding:8px 12px;display:flex;align-items:center;gap:8px;flex-shrink:0;border-top:1px solid #eee;}';
     html += '.chat-input{flex:1;padding:10px 16px;border:none;border-radius:24px;background:#f0f0f0;font-size:14px;font-family:inherit;outline:none;}';
     html += '.send-btn{width:44px;height:44px;background:#25D366;border:none;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:18px;flex-shrink:0;}';
@@ -223,13 +223,9 @@ app.get('/panel/:slug/pedidos', async function(req, res) {
 
     html += '<div class="header"><div class="header-left"><div class="header-avatar">📋</div><div class="header-info"><h1>' + negocio.nombre + '</h1><p>Panel de pedidos</p></div></div>';
     html += '<div class="header-actions"><a href="/qr/' + req.params.slug + '" target="_blank" class="header-btn">📱 QR</a><a href="/panel/' + req.params.slug + '/export" class="header-btn">⬇️ Excel</a></div></div>';
+    html += '<div class="tabs"><button class="tab ' + (chatsActivos.length === 0 ? 'active' : '') + '" onclick="showTab(\'pedidos\',this)">📦 Pedidos (' + pedidos.length + ')</button>';
+    html += '<button class="tab ' + (chatsActivos.length > 0 ? 'active' : '') + '" onclick="showTab(\'chats\',this)">💬 Chats ' + (chatsActivos.length > 0 ? '(' + chatsActivos.length + ')' : '') + '</button></div>';
 
-    html += '<div class="tabs">';
-    html += '<button class="tab ' + (chatsActivos.length === 0 ? 'active' : '') + '" onclick="showTab(\'pedidos\',this)">📦 Pedidos (' + pedidos.length + ')</button>';
-    html += '<button class="tab ' + (chatsActivos.length > 0 ? 'active' : '') + '" onclick="showTab(\'chats\',this)">💬 Chats ' + (chatsActivos.length > 0 ? '(' + chatsActivos.length + ')' : '') + '</button>';
-    html += '</div>';
-
-    // Tab pedidos
     html += '<div id="tab-pedidos" class="tab-content ' + (chatsActivos.length === 0 ? 'active' : '') + '">';
     if (pedidos.length === 0) {
         html += '<div class="vacio"><div class="vacio-icon">📦</div><p>No hay pedidos aun</p></div>';
@@ -238,14 +234,14 @@ app.get('/panel/:slug/pedidos', async function(req, res) {
             const hora = new Date(p.fecha).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Mexico_City' });
             const fecha = new Date(p.fecha).toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
             const claseMetodo = p.metodo_pago === 'TRANSFERENCIA' ? 'tag-transferencia' : 'tag-efectivo';
-            const iconoMetodo = p.metodo_pago === 'TRANSFERENCIA' ? '🏦' : '💵';
+            const iconoMetodo = p.metodo_pago === 'TRANSFERENCIA' ? 'Transferencia' : 'Efectivo';
             const claseEstado = p.estado === 'entregado' ? 'tag-entregado' : p.estado === 'cancelado' ? 'tag-cancelado' : 'tag-pendiente';
             const claseCard = p.estado !== 'pendiente' ? 'pedido-card ' + p.estado : 'pedido-card';
             html += '<div class="' + claseCard + '">';
             html += '<div class="pedido-header"><div class="pedido-nombre">👤 ' + (p.nombre_cliente || 'Sin nombre') + '</div><div class="pedido-hora">' + hora + '</div></div>';
             html += '<div class="pedido-detalle">🛒 ' + p.pedido.replace(/\n/g, '<br>') + '</div>';
             html += '<div class="pedido-detalle">📍 ' + (p.direccion || 'Sin direccion') + '</div>';
-            html += '<div style="margin-top:6px"><span class="tag ' + claseMetodo + '">' + iconoMetodo + ' ' + (p.metodo_pago || 'N/A') + '</span><span class="tag ' + claseEstado + '">' + p.estado + '</span></div>';
+            html += '<div style="margin-top:6px"><span class="tag ' + claseMetodo + '">' + iconoMetodo + '</span><span class="tag ' + claseEstado + '">' + p.estado + '</span></div>';
             html += '<div class="pedido-detalle" style="font-size:11px;color:#aaa">🕐 ' + fecha + '</div>';
             if (p.estado === 'pendiente') {
                 html += '<div class="pedido-btns">';
@@ -259,7 +255,6 @@ app.get('/panel/:slug/pedidos', async function(req, res) {
     }
     html += '</div>';
 
-    // Tab chats
     html += '<div id="tab-chats" class="tab-content ' + (chatsActivos.length > 0 ? 'active' : '') + '">';
     if (chatsActivos.length === 0) {
         html += '<div class="vacio"><div class="vacio-icon">💬</div><p>No hay chats activos</p></div>';
@@ -279,7 +274,6 @@ app.get('/panel/:slug/pedidos', async function(req, res) {
     }
     html += '</div>';
 
-    // Pantallas de chat
     chatsActivos.forEach(function(conv) {
         const esTransferencia = conv.metodo_pago === 'TRANSFERENCIA';
         const confirmado = conv.pedido_confirmado;
@@ -302,11 +296,11 @@ app.get('/panel/:slug/pedidos', async function(req, res) {
         conv.mensajes.forEach(function(m) {
             html += '<div class="bubble ' + m.de + '">';
             if (m.tipo === 'imagen' && m.media_url) {
-    html += '<a href="' + m.media_url + '" target="_blank" style="color:#075E54;font-weight:bold;">📷 Ver comprobante</a><div class="bubble-hora">' + formatHora(m.fecha) + '</div>';
+                html += '<a href="' + m.media_url + '" target="_blank">📷 Ver comprobante</a>';
             } else {
-                html += m.texto + '<div class="bubble-hora">' + formatHora(m.fecha) + '</div>';
+                html += m.texto;
             }
-            html += '</div>';
+            html += '<div class="bubble-hora">' + formatHora(m.fecha) + '</div></div>';
         });
         html += '</div>';
         html += '<form method="POST" action="/panel/' + req.params.slug + '/chat/' + conv._id + '/responder">';
@@ -319,7 +313,6 @@ app.get('/panel/:slug/pedidos', async function(req, res) {
     res.send(html);
 });
 
-// Responder desde panel
 app.post('/panel/:slug/chat/:id/responder', async function(req, res) {
     const conv = await Conversacion.findById(req.params.id);
     if (!conv) return res.status(404).send('No encontrado');
@@ -329,7 +322,6 @@ app.post('/panel/:slug/chat/:id/responder', async function(req, res) {
     res.redirect('/panel/' + req.params.slug + '/pedidos');
 });
 
-// Confirmar pedido
 app.post('/panel/:slug/chat/:id/confirmar', async function(req, res) {
     const negocio = buscarNegocioPorSlug(req.params.slug);
     if (!negocio) return res.status(404).send('No encontrado');
@@ -353,7 +345,6 @@ app.post('/panel/:slug/chat/:id/confirmar', async function(req, res) {
     res.redirect('/panel/' + req.params.slug + '/pedidos');
 });
 
-// Cerrar chat
 app.post('/panel/:slug/chat/:id/cerrar', async function(req, res) {
     const conv = await Conversacion.findById(req.params.id);
     if (!conv) return res.status(404).send('No encontrado');
@@ -363,7 +354,6 @@ app.post('/panel/:slug/chat/:id/cerrar', async function(req, res) {
     res.redirect('/panel/' + req.params.slug + '/pedidos');
 });
 
-// Imprimir
 app.post('/panel/:slug/pedido/:id/imprimir', async function(req, res) {
     const negocio = buscarNegocioPorSlug(req.params.slug);
     if (!negocio) return res.status(404).send('No encontrado');
@@ -375,7 +365,6 @@ app.post('/panel/:slug/pedido/:id/imprimir', async function(req, res) {
     res.redirect('/panel/' + req.params.slug + '/pedidos');
 });
 
-// Export Excel
 app.get('/panel/:slug/export', async function(req, res) {
     const negocio = buscarNegocioPorSlug(req.params.slug);
     if (!negocio) return res.status(404).send('No encontrado');
@@ -390,13 +379,11 @@ app.get('/panel/:slug/export', async function(req, res) {
     res.send('\uFEFF' + csv);
 });
 
-// Cambiar estado
 app.post('/panel/:slug/pedido/:id/estado', async function(req, res) {
     await Pedido.findByIdAndUpdate(req.params.id, { estado: req.body.estado });
     res.redirect('/panel/' + req.params.slug + '/pedidos');
 });
 
-// Webhook verificacion
 app.get('/webhook-meta', function(req, res) {
     const VERIFY_TOKEN = process.env.WEBHOOK_VERIFY_TOKEN || 'sackval212181';
     const mode = req.query['hub.mode'];
@@ -406,110 +393,116 @@ app.get('/webhook-meta', function(req, res) {
     else { res.sendStatus(403); }
 });
 
-// Webhook mensajes
 app.post('/webhook-meta', async function(req, res) {
     res.sendStatus(200);
-    const body = req.body;
-    if (body.object !== 'whatsapp_business_account') return;
-    const entry = body.entry && body.entry[0];
-    const change = entry && entry.changes && entry.changes[0];
-    const value = change && change.value;
-    const message = value && value.messages && value.messages[0];
-    if (!message) return;
-    const numeroCliente = message.from;
-    const phoneNumberId = value.metadata && value.metadata.phone_number_id;
-    const tipoMensaje = message.type;
-    const negocio = Object.values(negocios).find(function(n) { return n.phoneNumberId === phoneNumberId; });
-    if (!negocio) { console.log('Negocio no encontrado: ' + phoneNumberId); return; }
+    try {
+        const body = req.body;
+        if (body.object !== 'whatsapp_business_account') return;
+        const entry = body.entry && body.entry[0];
+        const change = entry && entry.changes && entry.changes[0];
+        const value = change && change.value;
+        const message = value && value.messages && value.messages[0];
+        if (!message) return;
+        const numeroCliente = message.from;
+        const phoneNumberId = value.metadata && value.metadata.phone_number_id;
+        const tipoMensaje = message.type;
+        const negocio = Object.values(negocios).find(function(n) { return n.phoneNumberId === phoneNumberId; });
+        if (!negocio) { console.log('Negocio no encontrado: ' + phoneNumberId); return; }
 
-    const convActiva = await Conversacion.findOne({ slug: negocio.slug, numero_cliente: numeroCliente, estado: 'esperando_negocio' });
-    if (convActiva) {
-        if (tipoMensaje === 'image') {
-            const mediaId = message.image && message.image.id;
-            const mediaUrl = mediaId ? await obtenerUrlImagen(mediaId) : null;
-            convActiva.mensajes.push({ de: 'cliente', texto: 'Imagen recibida', tipo: 'imagen', media_url: mediaUrl });
-        } else if (tipoMensaje === 'text') {
-            const texto = message.text && message.text.body ? message.text.body.trim() : '';
-            convActiva.mensajes.push({ de: 'cliente', texto: texto });
-        }
-        await convActiva.save();
-        return;
-    }
-
-    if (tipoMensaje !== 'text') return;
-    const texto = message.text && message.text.body ? message.text.body.trim() : '';
-    const mensajeLower = texto.toLowerCase();
-    console.log('[' + negocio.nombre + '] ' + numeroCliente + ': ' + texto);
-
-    const sesionKey = phoneNumberId + '_' + numeroCliente;
-    if (!sesiones[sesionKey]) sesiones[sesionKey] = { estado: 'inicio' };
-    const sesion = sesiones[sesionKey];
-    let clienteDB = await Cliente.findOne({ numero: numeroCliente });
-
-    if (mensajeLower === 'cambiar direccion') {
-        sesion.estado = 'cambiando_direccion';
-        await enviarMensaje(phoneNumberId, numeroCliente, 'Por favor escribe tu nueva direccion de entrega:');
-        return;
-    }
-
-    if (mensajeLower === 'pago') {
-        if (negocio.clabe) {
-            await enviarMensaje(phoneNumberId, numeroCliente, 'Datos para pago:\n\nBanco: ' + negocio.banco + '\nTitular: ' + negocio.titular + '\nCLABE: ' + negocio.clabe + '\n\nUna vez realizado tu pago envianos tu comprobante.');
-        } else {
-            await enviarMensaje(phoneNumberId, numeroCliente, 'Para informacion de pago comunicate con nosotros directamente.');
-        }
-        delete sesiones[sesionKey];
-        return;
-    }
-
-    let respuesta = '';
-
-    if (sesion.estado === 'inicio') {
-        if (!clienteDB || !clienteDB.nombre) { respuesta = 'Hola! Bienvenido a ' + negocio.nombre + '\n\nPara comenzar, como te llamas?'; sesion.estado = 'esperando_nombre'; }
-        else { respuesta = generarMenu(negocio, clienteDB.nombre); sesion.estado = 'esperando_decision'; }
-    } else if (sesion.estado === 'esperando_nombre') {
-        if (!clienteDB) { clienteDB = await Cliente.create({ numero: numeroCliente, nombre: texto }); }
-        else { clienteDB.nombre = texto; await clienteDB.save(); }
-        respuesta = generarMenu(negocio, texto);
-        sesion.estado = 'esperando_decision';
-    } else if (sesion.estado === 'esperando_decision') {
-        if (mensajeLower === 'si') { respuesta = 'Por favor escribenos tu pedido\n\nEjemplo:\n2 Producto 1\n1 Producto 2'; sesion.estado = 'esperando_pedido'; }
-        else if (mensajeLower === 'no') { respuesta = 'Hasta luego ' + (clienteDB ? clienteDB.nombre : '') + '! Fue un placer atenderte.'; delete sesiones[sesionKey]; }
-        else { respuesta = 'Por favor responde SI o NO.'; }
-    } else if (sesion.estado === 'esperando_pedido') {
-        sesion.pedido = texto;
-        if (!clienteDB || !clienteDB.direccion) { respuesta = 'Cual es tu direccion de entrega?'; sesion.estado = 'esperando_direccion'; }
-        else { respuesta = 'Como deseas pagar?\n\nResponde *EFECTIVO* o *TRANSFERENCIA*'; sesion.estado = 'esperando_pago'; }
-    } else if (sesion.estado === 'esperando_direccion') {
-        if (!clienteDB) { clienteDB = await Cliente.create({ numero: numeroCliente, direccion: texto }); }
-        else { clienteDB.direccion = texto; await clienteDB.save(); }
-        sesion.direccion = texto;
-        respuesta = 'Como deseas pagar?\n\nResponde *EFECTIVO* o *TRANSFERENCIA*';
-        sesion.estado = 'esperando_pago';
-    } else if (sesion.estado === 'esperando_pago') {
-        if (mensajeLower.includes('efect')) { sesion.metodo_pago = 'EFECTIVO'; }
-        else if (mensajeLower.includes('transfer')) { sesion.metodo_pago = 'TRANSFERENCIA'; }
-        else { respuesta = 'Por favor responde *EFECTIVO* o *TRANSFERENCIA*.'; }
-        if (sesion.metodo_pago) {
-            if (sesion.metodo_pago === 'TRANSFERENCIA' && negocio.clabe) {
-                await enviarMensaje(phoneNumberId, numeroCliente, 'Datos para tu transferencia:\n\nBanco: ' + negocio.banco + '\nTitular: ' + negocio.titular + '\nCLABE: ' + negocio.clabe + '\n\nPuedes realizar el pago antes o despues de recibir tu pedido.');
+        const convActiva = await Conversacion.findOne({ slug: negocio.slug, numero_cliente: numeroCliente, estado: 'esperando_negocio' });
+        if (convActiva) {
+            if (tipoMensaje === 'image') {
+                const mediaId = message.image && message.image.id;
+                let mediaUrl = null;
+                try { mediaUrl = mediaId ? await obtenerUrlImagen(mediaId) : null; } catch(e) { console.log('Error imagen:', e); }
+                convActiva.mensajes.push({ de: 'cliente', texto: 'Imagen recibida', tipo: 'imagen', media_url: mediaUrl });
+            } else if (tipoMensaje === 'text') {
+                const texto = message.text && message.text.body ? message.text.body.trim() : '';
+                convActiva.mensajes.push({ de: 'cliente', texto: texto });
+            } else {
+                convActiva.mensajes.push({ de: 'cliente', texto: 'Archivo recibido (' + tipoMensaje + ')' });
             }
-            await Conversacion.create({ slug: negocio.slug, phoneNumberId: phoneNumberId, numero_cliente: numeroCliente, nombre_cliente: clienteDB ? clienteDB.nombre : '', pedido: sesion.pedido, direccion: clienteDB ? clienteDB.direccion : (sesion.direccion || ''), metodo_pago: sesion.metodo_pago, mensajes: [{ de: 'cliente', texto: sesion.pedido }] });
-            respuesta = 'Recibimos tu pedido!\n\nEn breve te confirmamos precio y disponibilidad.';
-            sesion.estado = 'inicio';
-            sesion.metodo_pago = null;
+            await convActiva.save();
+            return;
         }
-    } else if (sesion.estado === 'cambiando_direccion') {
-        if (!clienteDB) { clienteDB = await Cliente.create({ numero: numeroCliente, direccion: texto }); }
-        else { clienteDB.direccion = texto; await clienteDB.save(); }
-        respuesta = 'Direccion actualizada: ' + texto + '\n\nEscribe Hola para continuar con tu pedido.';
-        delete sesiones[sesionKey];
-    } else {
-        if (!clienteDB || !clienteDB.nombre) { respuesta = 'Hola! Como te llamas?'; sesion.estado = 'esperando_nombre'; }
-        else { respuesta = generarMenu(negocio, clienteDB.nombre); sesion.estado = 'esperando_decision'; }
-    }
 
-    if (respuesta) await enviarMensaje(phoneNumberId, numeroCliente, respuesta);
+        if (tipoMensaje !== 'text') return;
+        const texto = message.text && message.text.body ? message.text.body.trim() : '';
+        const mensajeLower = texto.toLowerCase();
+        console.log('[' + negocio.nombre + '] ' + numeroCliente + ': ' + texto);
+
+        const sesionKey = phoneNumberId + '_' + numeroCliente;
+        if (!sesiones[sesionKey]) sesiones[sesionKey] = { estado: 'inicio' };
+        const sesion = sesiones[sesionKey];
+        let clienteDB = await Cliente.findOne({ numero: numeroCliente });
+
+        if (mensajeLower === 'cambiar direccion') {
+            sesion.estado = 'cambiando_direccion';
+            await enviarMensaje(phoneNumberId, numeroCliente, 'Por favor escribe tu nueva direccion de entrega:');
+            return;
+        }
+
+        if (mensajeLower === 'pago') {
+            if (negocio.clabe) {
+                await enviarMensaje(phoneNumberId, numeroCliente, 'Datos para pago:\n\nBanco: ' + negocio.banco + '\nTitular: ' + negocio.titular + '\nCLABE: ' + negocio.clabe + '\n\nUna vez realizado tu pago envianos tu comprobante.');
+            } else {
+                await enviarMensaje(phoneNumberId, numeroCliente, 'Para informacion de pago comunicate con nosotros directamente.');
+            }
+            delete sesiones[sesionKey];
+            return;
+        }
+
+        let respuesta = '';
+
+        if (sesion.estado === 'inicio') {
+            if (!clienteDB || !clienteDB.nombre) { respuesta = 'Hola! Bienvenido a ' + negocio.nombre + '\n\nPara comenzar, como te llamas?'; sesion.estado = 'esperando_nombre'; }
+            else { respuesta = generarMenu(negocio, clienteDB.nombre); sesion.estado = 'esperando_decision'; }
+        } else if (sesion.estado === 'esperando_nombre') {
+            if (!clienteDB) { clienteDB = await Cliente.create({ numero: numeroCliente, nombre: texto }); }
+            else { clienteDB.nombre = texto; await clienteDB.save(); }
+            respuesta = generarMenu(negocio, texto);
+            sesion.estado = 'esperando_decision';
+        } else if (sesion.estado === 'esperando_decision') {
+            if (mensajeLower === 'si') { respuesta = 'Por favor escribenos tu pedido\n\nEjemplo:\n2 Producto 1\n1 Producto 2'; sesion.estado = 'esperando_pedido'; }
+            else if (mensajeLower === 'no') { respuesta = 'Hasta luego ' + (clienteDB ? clienteDB.nombre : '') + '! Fue un placer atenderte.'; delete sesiones[sesionKey]; }
+            else { respuesta = 'Por favor responde SI o NO.'; }
+        } else if (sesion.estado === 'esperando_pedido') {
+            sesion.pedido = texto;
+            if (!clienteDB || !clienteDB.direccion) { respuesta = 'Cual es tu direccion de entrega?'; sesion.estado = 'esperando_direccion'; }
+            else { respuesta = 'Como deseas pagar?\n\nResponde *EFECTIVO* o *TRANSFERENCIA*'; sesion.estado = 'esperando_pago'; }
+        } else if (sesion.estado === 'esperando_direccion') {
+            if (!clienteDB) { clienteDB = await Cliente.create({ numero: numeroCliente, direccion: texto }); }
+            else { clienteDB.direccion = texto; await clienteDB.save(); }
+            sesion.direccion = texto;
+            respuesta = 'Como deseas pagar?\n\nResponde *EFECTIVO* o *TRANSFERENCIA*';
+            sesion.estado = 'esperando_pago';
+        } else if (sesion.estado === 'esperando_pago') {
+            if (mensajeLower.includes('efect')) { sesion.metodo_pago = 'EFECTIVO'; }
+            else if (mensajeLower.includes('transfer')) { sesion.metodo_pago = 'TRANSFERENCIA'; }
+            else { respuesta = 'Por favor responde *EFECTIVO* o *TRANSFERENCIA*.'; }
+            if (sesion.metodo_pago) {
+                if (sesion.metodo_pago === 'TRANSFERENCIA' && negocio.clabe) {
+                    await enviarMensaje(phoneNumberId, numeroCliente, 'Datos para tu transferencia:\n\nBanco: ' + negocio.banco + '\nTitular: ' + negocio.titular + '\nCLABE: ' + negocio.clabe + '\n\nPuedes realizar el pago antes o despues de recibir tu pedido.');
+                }
+                await Conversacion.create({ slug: negocio.slug, phoneNumberId: phoneNumberId, numero_cliente: numeroCliente, nombre_cliente: clienteDB ? clienteDB.nombre : '', pedido: sesion.pedido, direccion: clienteDB ? clienteDB.direccion : (sesion.direccion || ''), metodo_pago: sesion.metodo_pago, mensajes: [{ de: 'cliente', texto: sesion.pedido }] });
+                respuesta = 'Recibimos tu pedido!\n\nEn breve te confirmamos precio y disponibilidad.';
+                sesion.estado = 'inicio';
+                sesion.metodo_pago = null;
+            }
+        } else if (sesion.estado === 'cambiando_direccion') {
+            if (!clienteDB) { clienteDB = await Cliente.create({ numero: numeroCliente, direccion: texto }); }
+            else { clienteDB.direccion = texto; await clienteDB.save(); }
+            respuesta = 'Direccion actualizada: ' + texto + '\n\nEscribe Hola para continuar con tu pedido.';
+            delete sesiones[sesionKey];
+        } else {
+            if (!clienteDB || !clienteDB.nombre) { respuesta = 'Hola! Como te llamas?'; sesion.estado = 'esperando_nombre'; }
+            else { respuesta = generarMenu(negocio, clienteDB.nombre); sesion.estado = 'esperando_decision'; }
+        }
+
+        if (respuesta) await enviarMensaje(phoneNumberId, numeroCliente, respuesta);
+    } catch(err) {
+        console.error('Error en webhook:', err);
+    }
 });
 
 const PORT = process.env.PORT || 3000;
