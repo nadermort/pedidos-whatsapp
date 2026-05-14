@@ -40,9 +40,12 @@ const ConversacionSchema = new mongoose.Schema({
     pedido: String,
     direccion: String,
     metodo_pago: String,
+    pedido_confirmado: { type: Boolean, default: false },
     mensajes: [{
         de: String,
         texto: String,
+        tipo: { type: String, default: 'texto' },
+        media_url: String,
         fecha: { type: Date, default: Date.now }
     }],
     estado: { type: String, default: 'esperando_negocio' },
@@ -66,6 +69,10 @@ function generarMenu(negocio, nombreCliente) {
 
 function buscarNegocioPorSlug(slug) {
     return Object.values(negocios).find(function(n) { return n.slug === slug; });
+}
+
+function formatHora(fecha) {
+    return new Date(fecha).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Mexico_City' });
 }
 
 // ─── Enviar mensaje via Meta Graph API ───────────────────────────────────────
@@ -96,6 +103,21 @@ async function enviarMensaje(phoneNumberId, numeroCliente, texto) {
         }
     } catch (err) {
         console.error('Error enviando mensaje:', err);
+    }
+}
+
+// ─── Obtener URL de imagen de Meta ───────────────────────────────────────────
+async function obtenerUrlImagen(mediaId) {
+    const token = process.env.META_TOKEN;
+    try {
+        const response = await fetch('https://graph.facebook.com/v19.0/' + mediaId, {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        const data = await response.json();
+        return data.url || null;
+    } catch (err) {
+        console.error('Error obteniendo URL imagen:', err);
+        return null;
     }
 }
 
@@ -206,7 +228,7 @@ app.get('/qr/:slug', function(req, res) {
 app.get('/panel/:slug', function(req, res) {
     const negocio = buscarNegocioPorSlug(req.params.slug);
     if (!negocio) return res.status(404).send('Negocio no encontrado');
-    res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Panel - ' + negocio.nombre + '</title><style>body{font-family:Arial;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#f5f5f5;}.box{background:white;padding:40px;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.1);text-align:center;width:300px;}h2{color:#25D366;margin-bottom:5px;}p{color:#666;margin-bottom:20px;}input{width:100%;padding:10px;margin:10px 0;border:1px solid #ddd;border-radius:8px;box-sizing:border-box;font-size:15px;}button{width:100%;padding:12px;background:#25D366;color:white;border:none;border-radius:8px;font-size:16px;cursor:pointer;}button:hover{background:#1ea855;}</style></head><body><div class="box"><h2>' + negocio.nombre + '</h2><p>Panel de pedidos</p><form method="POST" action="/panel/' + req.params.slug + '/login"><input type="password" name="password" placeholder="Contrasena" required><button type="submit">Entrar</button></form></div></body></html>');
+    res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Panel - ' + negocio.nombre + '</title><style>@import url("https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap");*{box-sizing:border-box;}body{font-family:"Nunito",sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:linear-gradient(135deg,#075E54 0%,#128C7E 50%,#25D366 100%);}.box{background:white;padding:40px;border-radius:20px;box-shadow:0 20px 60px rgba(0,0,0,0.2);text-align:center;width:320px;}h2{color:#075E54;margin-bottom:5px;font-size:24px;font-weight:800;}p{color:#888;margin-bottom:24px;font-size:14px;}.logo{width:70px;height:70px;background:#25D366;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 20px;font-size:32px;}input{width:100%;padding:12px 16px;margin:8px 0;border:2px solid #eee;border-radius:12px;font-size:15px;font-family:inherit;outline:none;transition:border 0.2s;}input:focus{border-color:#25D366;}button{width:100%;padding:14px;background:linear-gradient(135deg,#25D366,#128C7E);color:white;border:none;border-radius:12px;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit;margin-top:8px;transition:transform 0.1s;}button:hover{transform:scale(1.02);}button:active{transform:scale(0.98);}</style></head><body><div class="box"><div class="logo">📋</div><h2>' + negocio.nombre + '</h2><p>Panel de pedidos</p><form method="POST" action="/panel/' + req.params.slug + '/login"><input type="password" name="password" placeholder="Contrasena" required><button type="submit">Entrar</button></form></div></body></html>');
 });
 
 app.post('/panel/:slug/login', function(req, res) {
@@ -226,132 +248,221 @@ app.get('/panel/:slug/pedidos', async function(req, res) {
     const pedidos = await Pedido.find({ slug: req.params.slug }).sort({ fecha: -1 }).limit(50);
     const chatsActivos = await Conversacion.find({ slug: req.params.slug, estado: 'esperando_negocio' }).sort({ fecha: -1 });
 
-    let html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Pedidos - ' + negocio.nombre + '</title><style>';
-    html += 'body{font-family:Arial;margin:0;background:#f5f5f5;}';
-    html += '.header{background:#25D366;color:white;padding:15px 20px;display:flex;justify-content:space-between;align-items:center;}';
-    html += '.header h1{margin:0;font-size:20px;}';
-    html += '.tabs{display:flex;background:white;border-bottom:2px solid #eee;}';
-    html += '.tab{padding:12px 24px;cursor:pointer;font-size:14px;font-weight:bold;color:#666;border-bottom:3px solid transparent;margin-bottom:-2px;}';
-    html += '.tab.active{color:#25D366;border-bottom-color:#25D366;}';
-    html += '.tab-content{display:none;padding:20px;}';
+    let html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">';
+    html += '<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">';
+    html += '<title>Pedidos - ' + negocio.nombre + '</title><style>';
+    html += '*{box-sizing:border-box;margin:0;padding:0;}';
+    html += 'body{font-family:"Nunito",sans-serif;background:#ECE5DD;height:100vh;display:flex;flex-direction:column;}';
+    html += '.header{background:#075E54;color:white;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;}';
+    html += '.header-left{display:flex;align-items:center;gap:12px;}';
+    html += '.header-avatar{width:40px;height:40px;background:#25D366;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;}';
+    html += '.header-info h1{font-size:17px;font-weight:700;}';
+    html += '.header-info p{font-size:12px;opacity:0.8;}';
+    html += '.header-actions{display:flex;gap:8px;}';
+    html += '.header-btn{background:rgba(255,255,255,0.15);color:white;border:none;padding:6px 12px;border-radius:20px;font-size:12px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:4px;font-family:inherit;}';
+    html += '.header-btn:hover{background:rgba(255,255,255,0.25);}';
+    html += '.tabs{background:#075E54;display:flex;border-top:1px solid rgba(255,255,255,0.1);flex-shrink:0;}';
+    html += '.tab{flex:1;padding:10px;text-align:center;color:rgba(255,255,255,0.7);font-size:13px;font-weight:700;cursor:pointer;border-bottom:3px solid transparent;transition:all 0.2s;font-family:inherit;background:none;border-left:none;border-right:none;border-top:none;}';
+    html += '.tab.active{color:white;border-bottom-color:#25D366;}';
+    html += '.tab-content{display:none;flex:1;overflow-y:auto;padding:12px;}';
     html += '.tab-content.active{display:block;}';
-    html += '.pedido{background:white;padding:15px;margin:10px 0;border-radius:8px;border-left:4px solid #25D366;box-shadow:0 2px 4px rgba(0,0,0,0.1);}';
-    html += '.pedido.entregado{border-left-color:#6c757d;opacity:0.7;}';
-    html += '.pedido.cancelado{border-left-color:#dc3545;opacity:0.7;}';
-    html += '.chat-card{background:white;padding:15px;margin:10px 0;border-radius:8px;border-left:4px solid #f0ad4e;box-shadow:0 2px 4px rgba(0,0,0,0.1);}';
-    html += '.chat-card.transferencia{border-left-color:#007bff;}';
-    html += '.cliente{color:#666;font-size:13px;}';
-    html += '.pedido-texto{margin:8px 0;font-size:15px;}';
-    html += '.direccion{color:#444;font-size:13px;margin:4px 0;}';
-    html += '.metodo-pago{display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;margin:4px 0;}';
-    html += '.metodo-efectivo{background:#d4edda;color:#155724;}';
-    html += '.metodo-transferencia{background:#cce5ff;color:#004085;}';
-    html += '.fecha{color:#999;font-size:12px;margin-bottom:8px;}';
-    html += '.estado-pendiente{display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;background:#fff3cd;color:#856404;}';
-    html += '.estado-entregado{display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;background:#d4edda;color:#155724;}';
-    html += '.estado-cancelado{display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;background:#f8d7da;color:#721c24;}';
-    html += '.btn-entregado{background:#25D366;color:white;border:none;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;margin-left:8px;}';
-    html += '.btn-cancelado{background:#dc3545;color:white;border:none;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;margin-left:5px;}';
-    html += '.btn-imprimir{background:#007bff;color:white;border:none;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;margin-left:5px;}';
-    html += '.btn-confirmar{background:#25D366;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:bold;margin-top:8px;width:100%;}';
-    html += '.btn-cerrar{background:#6c757d;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:bold;margin-top:5px;width:100%;}';
-    html += '.chat-mensajes{background:#f5f5f5;border-radius:8px;padding:10px;margin:8px 0;max-height:200px;overflow-y:auto;}';
-    html += '.msg{margin:5px 0;padding:6px 10px;border-radius:8px;font-size:13px;max-width:80%;}';
-    html += '.msg.cliente{background:white;border:1px solid #ddd;}';
-    html += '.msg.negocio{background:#dcf8c6;margin-left:auto;text-align:right;}';
-    html += '.msg-container{display:flex;flex-direction:column;}';
-    html += '.reply-box{display:flex;gap:8px;margin-top:8px;}';
-    html += '.reply-input{flex:1;padding:8px;border:1px solid #ddd;border-radius:6px;font-size:13px;}';
-    html += '.btn-reply{background:#25D366;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px;}';
-    html += '.badge{background:#dc3545;color:white;border-radius:50%;padding:2px 7px;font-size:11px;margin-left:5px;}';
-    html += '.vacio{text-align:center;color:#999;margin-top:50px;}';
+
+    // Estilos pedidos
+    html += '.pedido-card{background:white;border-radius:12px;padding:14px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,0.1);}';
+    html += '.pedido-card.entregado{opacity:0.6;}';
+    html += '.pedido-card.cancelado{opacity:0.6;}';
+    html += '.pedido-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;}';
+    html += '.pedido-nombre{font-weight:700;font-size:15px;color:#111;}';
+    html += '.pedido-hora{font-size:11px;color:#999;}';
+    html += '.pedido-detalle{font-size:13px;color:#444;margin:4px 0;}';
+    html += '.tag{display:inline-block;padding:2px 10px;border-radius:20px;font-size:11px;font-weight:700;margin-right:4px;}';
+    html += '.tag-efectivo{background:#d4edda;color:#155724;}';
+    html += '.tag-transferencia{background:#cce5ff;color:#004085;}';
+    html += '.tag-pendiente{background:#fff3cd;color:#856404;}';
+    html += '.tag-entregado{background:#d4edda;color:#155724;}';
+    html += '.tag-cancelado{background:#f8d7da;color:#721c24;}';
+    html += '.pedido-btns{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;}';
+    html += '.btn-sm{padding:6px 12px;border-radius:20px;font-size:12px;font-weight:700;cursor:pointer;border:none;font-family:inherit;}';
+    html += '.btn-verde{background:#25D366;color:white;}';
+    html += '.btn-rojo{background:#dc3545;color:white;}';
+    html += '.btn-azul{background:#007bff;color:white;}';
+
+    // Estilos chat lista
+    html += '.chat-item{background:white;border-radius:12px;padding:14px;margin-bottom:10px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.1);display:flex;align-items:center;gap:12px;transition:background 0.15s;}';
+    html += '.chat-item:hover{background:#f0fdf4;}';
+    html += '.chat-item.transferencia{border-left:4px solid #007bff;}';
+    html += '.chat-item.efectivo{border-left:4px solid #25D366;}';
+    html += '.chat-avatar{width:48px;height:48px;background:#25D366;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}';
+    html += '.chat-info{flex:1;min-width:0;}';
+    html += '.chat-nombre{font-weight:700;font-size:15px;color:#111;}';
+    html += '.chat-preview{font-size:13px;color:#666;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;}';
+    html += '.chat-meta{display:flex;flex-direction:column;align-items:flex-end;gap:4px;}';
+    html += '.chat-hora{font-size:11px;color:#999;}';
+    html += '.badge{background:#25D366;color:white;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;}';
+
+    // Estilos pantalla chat
+    html += '.chat-screen{display:none;flex-direction:column;height:100%;position:fixed;top:0;left:0;right:0;bottom:0;z-index:100;background:#ECE5DD;}';
+    html += '.chat-screen.active{display:flex;}';
+    html += '.chat-topbar{background:#075E54;color:white;padding:10px 16px;display:flex;align-items:center;gap:12px;flex-shrink:0;}';
+    html += '.back-btn{background:none;border:none;color:white;font-size:20px;cursor:pointer;padding:4px;}';
+    html += '.chat-topbar-avatar{width:38px;height:38px;background:#25D366;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;}';
+    html += '.chat-topbar-info{flex:1;}';
+    html += '.chat-topbar-info h3{font-size:15px;font-weight:700;margin:0;}';
+    html += '.chat-topbar-info p{font-size:12px;opacity:0.8;margin:0;}';
+    html += '.chat-action-bar{background:#f0f0f0;padding:8px 12px;display:flex;gap:8px;flex-shrink:0;border-bottom:1px solid #ddd;flex-wrap:wrap;}';
+    html += '.btn-confirmar{background:#25D366;color:white;border:none;padding:8px 16px;border-radius:20px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;}';
+    html += '.btn-confirmar:disabled{background:#ccc;cursor:not-allowed;}';
+    html += '.btn-confirmado{background:#128C7E;color:white;border:none;padding:8px 16px;border-radius:20px;font-size:13px;font-weight:700;font-family:inherit;cursor:default;}';
+    html += '.btn-cerrar{background:#6c757d;color:white;border:none;padding:8px 16px;border-radius:20px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;}';
+    html += '.chat-info-bar{background:#FFF9C4;padding:8px 16px;font-size:12px;color:#555;border-bottom:1px solid #eee;flex-shrink:0;}';
+    html += '.chat-messages{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:6px;}';
+    html += '.bubble{max-width:75%;padding:8px 12px;border-radius:12px;font-size:14px;line-height:1.4;position:relative;}';
+    html += '.bubble.cliente{background:white;border-radius:12px 12px 12px 0;align-self:flex-start;box-shadow:0 1px 2px rgba(0,0,0,0.1);}';
+    html += '.bubble.negocio{background:#DCF8C6;border-radius:12px 12px 0 12px;align-self:flex-end;box-shadow:0 1px 2px rgba(0,0,0,0.1);}';
+    html += '.bubble-hora{font-size:10px;color:#999;margin-top:3px;text-align:right;}';
+    html += '.bubble img{max-width:200px;border-radius:8px;display:block;}';
+    html += '.chat-input-bar{background:white;padding:8px 12px;display:flex;align-items:center;gap:8px;flex-shrink:0;border-top:1px solid #eee;}';
+    html += '.chat-input{flex:1;padding:10px 16px;border:none;border-radius:24px;background:#f0f0f0;font-size:14px;font-family:inherit;outline:none;}';
+    html += '.send-btn{width:44px;height:44px;background:#25D366;border:none;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:18px;flex-shrink:0;}';
+    html += '.vacio{text-align:center;color:#999;padding:40px 20px;}';
+    html += '.vacio-icon{font-size:48px;margin-bottom:12px;}';
     html += '</style><meta http-equiv="refresh" content="15"></head><body>';
 
-    html += '<div class="header"><h1>📋 ' + negocio.nombre + '</h1>';
-    html += '<div style="display:flex;align-items:center;gap:10px">';
-    html += '<a href="/qr/' + req.params.slug + '" target="_blank" style="background:white;color:#25D366;padding:6px 14px;border-radius:8px;font-size:13px;font-weight:bold;text-decoration:none">📱 QR</a>';
-    html += '<a href="/panel/' + req.params.slug + '/export" style="background:white;color:#25D366;padding:6px 14px;border-radius:8px;font-size:13px;font-weight:bold;text-decoration:none">⬇️ Excel</a>';
+    // Header
+    html += '<div class="header">';
+    html += '<div class="header-left"><div class="header-avatar">📋</div>';
+    html += '<div class="header-info"><h1>' + negocio.nombre + '</h1><p>Panel de pedidos</p></div></div>';
+    html += '<div class="header-actions">';
+    html += '<a href="/qr/' + req.params.slug + '" target="_blank" class="header-btn">📱 QR</a>';
+    html += '<a href="/panel/' + req.params.slug + '/export" class="header-btn">⬇️ Excel</a>';
     html += '</div></div>';
 
+    // Tabs
     html += '<div class="tabs">';
-    html += '<div class="tab ' + (chatsActivos.length === 0 ? 'active' : '') + '" onclick="showTab(\'pedidos\')">📦 Pedidos (' + pedidos.length + ')</div>';
-    html += '<div class="tab ' + (chatsActivos.length > 0 ? 'active' : '') + '" onclick="showTab(\'chats\')">💬 Chats activos';
-    if (chatsActivos.length > 0) html += '<span class="badge">' + chatsActivos.length + '</span>';
-    html += '</div></div>';
+    html += '<button class="tab ' + (chatsActivos.length === 0 ? 'active' : '') + '" onclick="showTab(\'pedidos\', this)">📦 Pedidos (' + pedidos.length + ')</button>';
+    html += '<button class="tab ' + (chatsActivos.length > 0 ? 'active' : '') + '" onclick="showTab(\'chats\', this)">💬 Chats ' + (chatsActivos.length > 0 ? '(' + chatsActivos.length + ')' : '') + '</button>';
+    html += '</div>';
 
     // Tab pedidos
     html += '<div id="tab-pedidos" class="tab-content ' + (chatsActivos.length === 0 ? 'active' : '') + '">';
     if (pedidos.length === 0) {
-        html += '<div class="vacio"><p>No hay pedidos aun</p></div>';
+        html += '<div class="vacio"><div class="vacio-icon">📦</div><p>No hay pedidos aun</p></div>';
     } else {
         pedidos.forEach(function(p) {
             const fecha = new Date(p.fecha).toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
-            const claseEstado = p.estado === 'entregado' ? 'estado-entregado' : p.estado === 'cancelado' ? 'estado-cancelado' : 'estado-pendiente';
-            const clasePedido = p.estado === 'entregado' ? 'pedido entregado' : p.estado === 'cancelado' ? 'pedido cancelado' : 'pedido';
-            const claseMetodo = p.metodo_pago === 'TRANSFERENCIA' ? 'metodo-transferencia' : 'metodo-efectivo';
+            const hora = new Date(p.fecha).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Mexico_City' });
+            const claseMetodo = p.metodo_pago === 'TRANSFERENCIA' ? 'tag-transferencia' : 'tag-efectivo';
             const iconoMetodo = p.metodo_pago === 'TRANSFERENCIA' ? '🏦' : '💵';
-
-            html += '<div class="' + clasePedido + '">';
-            html += '<div class="cliente">👤 ' + (p.nombre_cliente || 'Sin nombre') + ' | 📱 ' + p.numero_cliente + '</div>';
-            html += '<div class="pedido-texto">🛒 ' + p.pedido.replace(/\n/g, '<br>') + '</div>';
-            html += '<div class="direccion">📍 ' + (p.direccion || 'Sin direccion') + '</div>';
-            html += '<span class="metodo-pago ' + claseMetodo + '">' + iconoMetodo + ' ' + (p.metodo_pago || 'N/A') + '</span>';
-            html += '<div class="fecha">🕐 ' + fecha + '</div>';
-            html += '<span class="' + claseEstado + '">' + p.estado + '</span>';
-            if (p.estado === 'pendiente') {
-                html += '<form method="POST" action="/panel/' + req.params.slug + '/pedido/' + p._id + '/estado" style="display:inline">';
-                html += '<button class="btn-entregado" name="estado" value="entregado">✅ Entregado</button>';
-                html += '<button class="btn-cancelado" name="estado" value="cancelado">❌ Cancelado</button>';
-                html += '</form>';
-                html += '<form method="POST" action="/panel/' + req.params.slug + '/pedido/' + p._id + '/imprimir" style="display:inline">';
-                html += '<button class="btn-imprimir">🖨️ Imprimir</button>';
-                html += '</form>';
-            }
-            html += '</div>';
-        });
-    }
-    html += '</div>';
-
-    // Tab chats activos
-    html += '<div id="tab-chats" class="tab-content ' + (chatsActivos.length > 0 ? 'active' : '') + '">';
-    if (chatsActivos.length === 0) {
-        html += '<div class="vacio"><p>No hay chats activos</p></div>';
-    } else {
-        chatsActivos.forEach(function(conv) {
-            const fecha = new Date(conv.fecha).toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
-            const esTransferencia = conv.metodo_pago === 'TRANSFERENCIA';
-            const claseCard = esTransferencia ? 'chat-card transferencia' : 'chat-card';
-            const claseMetodo = esTransferencia ? 'metodo-transferencia' : 'metodo-efectivo';
-            const iconoMetodo = esTransferencia ? '🏦' : '💵';
+            const claseEstado = p.estado === 'entregado' ? 'tag-entregado' : p.estado === 'cancelado' ? 'tag-cancelado' : 'tag-pendiente';
+            const claseCard = p.estado !== 'pendiente' ? 'pedido-card ' + p.estado : 'pedido-card';
 
             html += '<div class="' + claseCard + '">';
-            html += '<div class="cliente">👤 ' + (conv.nombre_cliente || 'Sin nombre') + ' | 📱 ' + conv.numero_cliente + '</div>';
-            html += '<div class="pedido-texto">🛒 ' + conv.pedido.replace(/\n/g, '<br>') + '</div>';
-            html += '<div class="direccion">📍 ' + (conv.direccion || 'Sin direccion') + '</div>';
-            html += '<span class="metodo-pago ' + claseMetodo + '">' + iconoMetodo + ' ' + (conv.metodo_pago || 'N/A') + '</span>';
-            html += '<div class="fecha">🕐 ' + fecha + '</div>';
-            html += '<div class="chat-mensajes"><div class="msg-container">';
-            conv.mensajes.forEach(function(m) {
-                html += '<div class="msg ' + m.de + '"><strong>' + (m.de === 'cliente' ? '👤' : '🏪') + '</strong> ' + m.texto + '</div>';
-            });
-            html += '</div></div>';
-            html += '<form method="POST" action="/panel/' + req.params.slug + '/chat/' + conv._id + '/responder">';
-            html += '<div class="reply-box"><input class="reply-input" type="text" name="mensaje" placeholder="Escribe tu respuesta..." required><button class="btn-reply" type="submit">Enviar</button></div>';
-            html += '</form>';
-            html += '<form method="POST" action="/panel/' + req.params.slug + '/chat/' + conv._id + '/confirmar">';
-            html += '<button class="btn-confirmar" type="submit">✅ CONFIRMAR PEDIDO — Imprimir ticket</button>';
-            html += '</form>';
-            if (esTransferencia) {
-                html += '<form method="POST" action="/panel/' + req.params.slug + '/chat/' + conv._id + '/cerrar">';
-                html += '<button class="btn-cerrar" type="submit">🔒 CERRAR CHAT — Pago verificado</button>';
-                html += '</form>';
+            html += '<div class="pedido-header"><div class="pedido-nombre">👤 ' + (p.nombre_cliente || 'Sin nombre') + '</div><div class="pedido-hora">' + hora + '</div></div>';
+            html += '<div class="pedido-detalle">🛒 ' + p.pedido.replace(/\n/g, '<br>') + '</div>';
+            html += '<div class="pedido-detalle">📍 ' + (p.direccion || 'Sin direccion') + '</div>';
+            html += '<div style="margin-top:6px"><span class="tag ' + claseMetodo + '">' + iconoMetodo + ' ' + (p.metodo_pago || 'N/A') + '</span><span class="tag ' + claseEstado + '">' + p.estado + '</span></div>';
+            html += '<div class="pedido-detalle" style="font-size:11px;color:#aaa">🕐 ' + fecha + '</div>';
+            if (p.estado === 'pendiente') {
+                html += '<div class="pedido-btns">';
+                html += '<form method="POST" action="/panel/' + req.params.slug + '/pedido/' + p._id + '/estado" style="display:inline"><button class="btn-sm btn-verde" name="estado" value="entregado">✅ Entregado</button></form>';
+                html += '<form method="POST" action="/panel/' + req.params.slug + '/pedido/' + p._id + '/estado" style="display:inline"><button class="btn-sm btn-rojo" name="estado" value="cancelado">❌ Cancelado</button></form>';
+                html += '<form method="POST" action="/panel/' + req.params.slug + '/pedido/' + p._id + '/imprimir" style="display:inline"><button class="btn-sm btn-azul">🖨️ Imprimir</button></form>';
+                html += '</div>';
             }
             html += '</div>';
         });
     }
     html += '</div>';
 
-    html += '<script>function showTab(tab){document.querySelectorAll(".tab").forEach(function(t){t.classList.remove("active");});document.querySelectorAll(".tab-content").forEach(function(t){t.classList.remove("active");});document.getElementById("tab-"+tab).classList.add("active");event.target.classList.add("active");}</script>';
+    // Tab chats — lista estilo WhatsApp
+    html += '<div id="tab-chats" class="tab-content ' + (chatsActivos.length > 0 ? 'active' : '') + '">';
+    if (chatsActivos.length === 0) {
+        html += '<div class="vacio"><div class="vacio-icon">💬</div><p>No hay chats activos</p></div>';
+    } else {
+        chatsActivos.forEach(function(conv) {
+            const hora = new Date(conv.fecha).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Mexico_City' });
+            const ultimoMensaje = conv.mensajes.length > 0 ? conv.mensajes[conv.mensajes.length - 1].texto : conv.pedido;
+            const esTransferencia = conv.metodo_pago === 'TRANSFERENCIA';
+            const claseItem = esTransferencia ? 'chat-item transferencia' : 'chat-item efectivo';
+
+            html += '<div class="' + claseItem + '" onclick="abrirChat(\'' + conv._id + '\')">';
+            html += '<div class="chat-avatar">' + (esTransferencia ? '🏦' : '💵') + '</div>';
+            html += '<div class="chat-info">';
+            html += '<div class="chat-nombre">' + (conv.nombre_cliente || 'Sin nombre') + '</div>';
+            html += '<div class="chat-preview">' + ultimoMensaje.substring(0, 50) + '</div>';
+            html += '</div>';
+            html += '<div class="chat-meta"><div class="chat-hora">' + hora + '</div>';
+            if (!conv.pedido_confirmado) html += '<div class="badge">!</div>';
+            html += '</div></div>';
+        });
+    }
+    html += '</div>';
+
+    // Pantallas de chat individuales
+    chatsActivos.forEach(function(conv) {
+        const esTransferencia = conv.metodo_pago === 'TRANSFERENCIA';
+        const confirmado = conv.pedido_confirmado;
+
+        html += '<div class="chat-screen" id="chat-' + conv._id + '">';
+        html += '<div class="chat-topbar">';
+        html += '<button class="back-btn" onclick="cerrarChat()">&#8592;</button>';
+        html += '<div class="chat-topbar-avatar">' + (esTransferencia ? '🏦' : '💵') + '</div>';
+        html += '<div class="chat-topbar-info"><h3>' + (conv.nombre_cliente || 'Sin nombre') + '</h3><p>📱 ' + conv.numero_cliente + '</p></div>';
+        html += '</div>';
+
+        // Barra de acciones
+        html += '<div class="chat-action-bar">';
+        if (confirmado) {
+            html += '<span class="btn-confirmado">✅ Pedido confirmado</span>';
+        } else {
+            html += '<form method="POST" action="/panel/' + req.params.slug + '/chat/' + conv._id + '/confirmar" style="display:inline"><button class="btn-confirmar" type="submit">✅ Confirmar pedido</button></form>';
+        }
+        if (esTransferencia) {
+            html += '<form method="POST" action="/panel/' + req.params.slug + '/chat/' + conv._id + '/cerrar" style="display:inline"><button class="btn-cerrar" type="submit">🔒 Pago verificado</button></form>';
+        }
+        html += '</div>';
+
+        // Info del pedido
+        html += '<div class="chat-info-bar">🛒 ' + conv.pedido + ' &nbsp;|&nbsp; 📍 ' + (conv.direccion || 'Sin dir') + ' &nbsp;|&nbsp; ' + (esTransferencia ? '🏦 Transferencia' : '💵 Efectivo') + '</div>';
+
+        // Mensajes
+        html += '<div class="chat-messages">';
+        conv.mensajes.forEach(function(m) {
+            html += '<div class="bubble ' + m.de + '">';
+            if (m.tipo === 'imagen' && m.media_url) {
+                html += '<img src="' + m.media_url + '" alt="Imagen"><div class="bubble-hora">' + formatHora(m.fecha) + '</div>';
+            } else {
+                html += m.texto + '<div class="bubble-hora">' + formatHora(m.fecha) + '</div>';
+            }
+            html += '</div>';
+        });
+        html += '</div>';
+
+        // Input de respuesta
+        html += '<form method="POST" action="/panel/' + req.params.slug + '/chat/' + conv._id + '/responder">';
+        html += '<div class="chat-input-bar">';
+        html += '<input class="chat-input" type="text" name="mensaje" placeholder="Escribe un mensaje..." required autocomplete="off">';
+        html += '<button class="send-btn" type="submit">&#10148;</button>';
+        html += '</div></form>';
+        html += '</div>';
+    });
+
+    html += '<script>';
+    html += 'function showTab(tab, el){';
+    html += 'document.querySelectorAll(".tab").forEach(function(t){t.classList.remove("active");});';
+    html += 'document.querySelectorAll(".tab-content").forEach(function(t){t.classList.remove("active");});';
+    html += 'document.getElementById("tab-"+tab).classList.add("active");';
+    html += 'el.classList.add("active");';
+    html += '}';
+    html += 'function abrirChat(id){';
+    html += 'document.getElementById("chat-"+id).classList.add("active");';
+    html += 'var msgs=document.querySelector("#chat-"+id+" .chat-messages");';
+    html += 'if(msgs) msgs.scrollTop=msgs.scrollHeight;';
+    html += '}';
+    html += 'function cerrarChat(){';
+    html += 'document.querySelectorAll(".chat-screen").forEach(function(s){s.classList.remove("active");});';
+    html += '}';
+    html += '</script>';
     html += '</body></html>';
 
     res.send(html);
@@ -373,7 +484,7 @@ app.post('/panel/:slug/chat/:id/confirmar', async function(req, res) {
     if (!negocio) return res.status(404).send('No encontrado');
 
     const conv = await Conversacion.findById(req.params.id);
-    if (!conv) return res.status(404).send('No encontrado');
+    if (!conv || conv.pedido_confirmado) return res.redirect('/panel/' + req.params.slug + '/pedidos');
 
     const clienteDB = await Cliente.findOne({ numero: conv.numero_cliente });
     const fecha = new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
@@ -398,30 +509,28 @@ app.post('/panel/:slug/chat/:id/confirmar', async function(req, res) {
         '\n\nGracias por tu compra en ' + negocio.nombre + '!'
     );
 
-    // Efectivo: cerrar chat automaticamente
-    // Transferencia: mantener abierto hasta verificar pago
+    conv.pedido_confirmado = true;
+
     if (conv.metodo_pago === 'TRANSFERENCIA') {
         conv.mensajes.push({ de: 'negocio', texto: 'Pedido confirmado. En espera de verificacion de pago.' });
         await conv.save();
     } else {
         conv.estado = 'cerrado';
         await conv.save();
-        const sesionKey = conv.phoneNumberId + '_' + conv.numero_cliente;
-        delete sesiones[sesionKey];
+        delete sesiones[conv.phoneNumberId + '_' + conv.numero_cliente];
     }
 
     console.log('PEDIDO CONFIRMADO - ' + negocio.nombre + ' | ' + conv.nombre_cliente + ' | ' + conv.metodo_pago);
     res.redirect('/panel/' + req.params.slug + '/pedidos');
 });
 
-// Cerrar chat (transferencia verificada)
+// Cerrar chat
 app.post('/panel/:slug/chat/:id/cerrar', async function(req, res) {
     const conv = await Conversacion.findById(req.params.id);
     if (!conv) return res.status(404).send('No encontrado');
     conv.estado = 'cerrado';
     await conv.save();
-    const sesionKey = conv.phoneNumberId + '_' + conv.numero_cliente;
-    delete sesiones[sesionKey];
+    delete sesiones[conv.phoneNumberId + '_' + conv.numero_cliente];
     res.redirect('/panel/' + req.params.slug + '/pedidos');
 });
 
@@ -486,26 +595,17 @@ app.post('/webhook-meta', async function(req, res) {
     const value = change && change.value;
     const message = value && value.messages && value.messages[0];
 
-    if (!message || message.type !== 'text') return;
+    if (!message) return;
 
     const numeroCliente = message.from;
-    const texto = message.text && message.text.body ? message.text.body.trim() : '';
-    const mensajeLower = texto.toLowerCase();
     const phoneNumberId = value.metadata && value.metadata.phone_number_id;
+    const tipoMensaje = message.type;
 
     const negocio = Object.values(negocios).find(function(n) { return n.phoneNumberId === phoneNumberId; });
     if (!negocio) {
         console.log('Negocio no encontrado para phoneNumberId: ' + phoneNumberId);
         return;
     }
-
-    console.log('[' + negocio.nombre + '] Mensaje de ' + numeroCliente + ': ' + texto);
-
-    const sesionKey = phoneNumberId + '_' + numeroCliente;
-    if (!sesiones[sesionKey]) sesiones[sesionKey] = { estado: 'inicio' };
-    const sesion = sesiones[sesionKey];
-
-    let clienteDB = await Cliente.findOne({ numero: numeroCliente });
 
     // Si hay conversacion activa, agregar mensaje al historial
     const convActiva = await Conversacion.findOne({
@@ -515,10 +615,30 @@ app.post('/webhook-meta', async function(req, res) {
     });
 
     if (convActiva) {
-        convActiva.mensajes.push({ de: 'cliente', texto: texto });
+        if (tipoMensaje === 'image') {
+            const mediaId = message.image && message.image.id;
+            const mediaUrl = mediaId ? await obtenerUrlImagen(mediaId) : null;
+            convActiva.mensajes.push({ de: 'cliente', texto: '📷 Imagen', tipo: 'imagen', media_url: mediaUrl });
+        } else if (tipoMensaje === 'text') {
+            const texto = message.text && message.text.body ? message.text.body.trim() : '';
+            convActiva.mensajes.push({ de: 'cliente', texto: texto });
+        }
         await convActiva.save();
         return;
     }
+
+    if (tipoMensaje !== 'text') return;
+
+    const texto = message.text && message.text.body ? message.text.body.trim() : '';
+    const mensajeLower = texto.toLowerCase();
+
+    console.log('[' + negocio.nombre + '] Mensaje de ' + numeroCliente + ': ' + texto);
+
+    const sesionKey = phoneNumberId + '_' + numeroCliente;
+    if (!sesiones[sesionKey]) sesiones[sesionKey] = { estado: 'inicio' };
+    const sesion = sesiones[sesionKey];
+
+    let clienteDB = await Cliente.findOne({ numero: numeroCliente });
 
     // Comandos globales
     if (mensajeLower === 'cambiar direccion') {
@@ -595,7 +715,6 @@ app.post('/webhook-meta', async function(req, res) {
         sesion.estado = 'esperando_pago';
 
     } else if (sesion.estado === 'esperando_pago') {
-        // Detectar efectivo o transferencia aunque haya errores de ortografia
         if (mensajeLower.includes('efect')) {
             sesion.metodo_pago = 'EFECTIVO';
         } else if (mensajeLower.includes('transfer')) {
@@ -605,7 +724,6 @@ app.post('/webhook-meta', async function(req, res) {
         }
 
         if (sesion.metodo_pago) {
-            // Si es transferencia, mandar datos bancarios
             if (sesion.metodo_pago === 'TRANSFERENCIA' && negocio.clabe) {
                 await enviarMensaje(phoneNumberId, numeroCliente,
                     'Datos para tu transferencia:\n\nBanco: ' + negocio.banco +
@@ -615,7 +733,6 @@ app.post('/webhook-meta', async function(req, res) {
                 );
             }
 
-            // Crear conversacion activa en panel
             await Conversacion.create({
                 slug: negocio.slug,
                 phoneNumberId: phoneNumberId,
