@@ -302,7 +302,7 @@ app.get('/panel/:slug/pedidos', async function(req, res) {
         conv.mensajes.forEach(function(m) {
             html += '<div class="bubble ' + m.de + '">';
             if (m.tipo === 'imagen' && m.media_url) {
-                html += '<img src="' + m.media_url + '" alt="Imagen"><div class="bubble-hora">' + formatHora(m.fecha) + '</div>';
+    html += '<a href="' + m.media_url + '" target="_blank" style="color:#075E54;font-weight:bold;">📷 Ver comprobante</a><div class="bubble-hora">' + formatHora(m.fecha) + '</div>';
             } else {
                 html += m.texto + '<div class="bubble-hora">' + formatHora(m.fecha) + '</div>';
             }
